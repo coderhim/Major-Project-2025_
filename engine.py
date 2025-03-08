@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
-import bezier
+# import bezier
 import numpy as np
 
 class HybridAugmentor(nn.Module):
