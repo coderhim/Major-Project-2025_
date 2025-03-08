@@ -12,12 +12,109 @@ from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
 print = functools.partial(print, flush=True)
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision.transforms import functional as TF
+import bezier
+import numpy as np
+
+class HybridAugmentor(nn.Module):
+    def __init__(self, num_classes, tau_max=0.7, tau_min=0.3, gamma=5.0):
+        super().__init__()
+        self.num_classes = num_classes
+        self.tau_max = tau_max
+        self.tau_min = tau_min
+        self.gamma = gamma
+        self.controller = nn.Sequential(
+            nn.Linear(4, 16),
+            nn.ReLU(),
+            nn.Linear(16, 3)
+        )  # Progressive augmentation controller
+
+    def class_aware_mixup(self, x, masks, alpha=0.4):
+        """Class-aware nonlinear mixup augmentation"""
+        batch_size = x.size(0)
+        lam = np.random.beta(alpha, alpha)
+        
+        # Generate mixed image using class-specific masks
+        perm = torch.randperm(batch_size)
+        mixed_x = torch.zeros_like(x)
+        for c in range(self.num_classes):
+            mask = masks[:,c].unsqueeze(1)
+            mixed_x += mask * (lam * x + (1-lam) * x[perm]) + (1-mask) * x
+            
+        return mixed_x, lam
+
+    def bezier_transform(self, x, masks, control_points=3):
+        """Class-specific Bézier curve transformation"""
+        B, C, H, W = x.shape
+        transformed = torch.zeros_like(x)
+        
+        for c in range(self.num_classes):
+            mask = masks[:,c].unsqueeze(1)
+            nodes = np.random.uniform(0, 1, (2, control_points))
+            curve = bezier.Curve(nodes, degree=control_points-1)
+            t_values = torch.linspace(0, 1, H*W)
+            sampled_points = curve.evaluate_multi(t_values).T.reshape(H,W,2)
+            
+            # Apply transform to masked regions
+            warped = TF.affine(x, angle=0, translate=[0,0], 
+                             scale=1, shear=sampled_points[...,0])
+            warped = TF.affine(warped, angle=0, translate=[0,0],
+                             scale=1, shear=sampled_points[...,1])
+            transformed += mask * warped
+            
+        return transformed
+
+    def adaptive_threshold(self, epoch, total_epochs):
+        """Sigmoidal curriculum learning for saliency threshold"""
+        t = epoch / total_epochs
+        return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
+
+    def forward(self, x, masks, epoch, total_epochs):
+        # Phase 1: Class-aware nonlinear mixup
+        mixed_x, lam = self.class_aware_mixup(x, masks)
+        
+        # Phase 2: Location-scale transformation
+        global_aug = self.bezier_transform(mixed_x, masks)
+        local_aug = self.bezier_transform(x, masks)
+        
+        # Controller-adjusted parameters
+        control_params = self.controller(torch.tensor([lam, epoch/total_epochs, 
+                                                      global_aug.mean(), local_aug.std()]))
+        alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
+        
+        # Adaptive saliency fusion
+        with torch.enable_grad():
+            grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True)[0]
+        saliency = (grad_global.abs().mean(1, keepdim=True) > 
+                   self.adaptive_threshold(epoch, total_epochs)).float()
+        
+        fused = saliency * global_aug + (1 - saliency) * local_aug
+        return fused
+
+class SemanticConsistencyLoss(nn.Module):
+    def __init__(self, feat_layers=[1,3,5], weight=0.3):
+        super().__init__()
+        self.feat_layers = feat_layers
+        self.weight = weight
+        
+    def forward(self, feats_orig, feats_aug):
+        loss = 0
+        for l in self.feat_layers:
+            orig = feats_orig[l].flatten(2)
+            aug = feats_aug[l].flatten(2)
+            loss += F.mse_loss(orig, aug, reduction='none').mean([1,2])
+        return self.weight * loss.mean()
+
 def train_warm_up(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, learning_rate:float, warmup_iteration: int = 1500):
     model.train()
-    criterion.train()
-
+    criterion = nn.DiceLoss()
+    aux_criterion = SemanticConsistencyLoss()
+    aug_module = HybridAugmentor(num_classes=5)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
@@ -34,18 +131,30 @@ def train_warm_up(model: torch.nn.Module, criterion: torch.nn.Module,
 
             img=samples['images']
             lbl=samples['labels']
-            pred = model(img)
-            loss_dict = criterion.get_loss(pred,lbl)
-            losses = sum(loss_dict[k] * criterion.weight_dict[k] for k in loss_dict.keys())
+             # Generate augmented sample
+            augmented = aug_module(img, lbl, cur_iteration, warmup_iteration)
+            # Forward passes
+            logits_orig, feats_orig = model(img, return_features=True)
+            logits_aug, feats_aug = model(augmented, return_features=True)
+            # Loss calculation
+            dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+            cons_loss = aux_criterion(feats_orig, feats_aug)
+
+            total_loss = dice_loss + cons_loss
+
+            # Optimization step
             optimizer.zero_grad()
-            losses.backward()
+            total_loss.backward()
             optimizer.step()
 
-            metric_logger.update(**loss_dict)
+            # Update metrics
+            metric_logger.update(dice_loss=dice_loss.item(), cons_loss=cons_loss.item())
             metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-            if cur_iteration>=warmup_iteration:
-                print(f'WarnUp End with Iteration {cur_iteration} and current lr is {optimizer.param_groups[0]["lr"]}.')
+
+            if cur_iteration >= warmup_iteration:
+                print(f'WarmUp End with Iteration {cur_iteration} and current lr is {optimizer.param_groups[0]["lr"]}.')
                 return cur_iteration
+
         metric_logger.synchronize_between_processes()
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,

@@ -251,7 +251,7 @@ if __name__ == "__main__":
             return lr_l
         scheduler = lr_scheduler.LambdaLR(opt, lr_lambda=lambda_rule)
     else:
-        scheduler=None
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=100)
         print('We follow the SSDG learning rate schedule by default, you can add your own schedule by yourself')
         raise NotImplementedError
 
