@@ -125,7 +125,7 @@ def train_warm_up(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, learning_rate:float, warmup_iteration: int = 1500):
     model.train()
-    criterion = nn.DiceLoss()
+    criterion.train()
     aux_criterion = SemanticConsistencyLoss()
     aug_module = HybridAugmentor(num_classes=5)
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -174,7 +174,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1, grad_scaler=None):
     model.train()
-    criterion = nn.DiceLoss()
+    criterion.train()
     aux_criterion = SemanticConsistencyLoss()
     aug_module = HybridAugmentor(num_classes=5)
 
@@ -242,7 +242,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1,config=None,visdir=None):
     model.train()
-    criterion = nn.DiceLoss()
+    criterion.train()
     aux_criterion = SemanticConsistencyLoss()
     aug_module = HybridAugmentor(num_classes=5)
 
