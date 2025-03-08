@@ -161,15 +161,18 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1, grad_scaler=None):
     model.train()
-    criterion.train()
+    criterion = nn.DiceLoss()
+    aux_criterion = SemanticConsistencyLoss()
+    aug_module = HybridAugmentor(num_classes=5)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
-    header = 'Epoch: [{}]'.format(epoch)
+    header = f'Epoch: [{epoch}]'
     print_freq = 10
 
     for i, samples in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        # Move samples to the appropriate device
         for k, v in samples.items():
             if isinstance(samples[k], torch.Tensor):
                 samples[k] = v.to(device)
@@ -177,31 +180,47 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         img = samples['images']
         lbl = samples['labels']
 
+        # Generate augmented sample
+        augmented = aug_module(img, lbl, cur_iteration, max_iteration)
+
         if grad_scaler is None:
-            pred = model(img)
-            loss_dict = criterion.get_loss(pred,lbl)
-            losses = sum(loss_dict[k] * criterion.weight_dict[k] for k in loss_dict.keys())
+            # Regular precision
+            logits_orig, feats_orig = model(img, return_features=True)
+            logits_aug, feats_aug = model(augmented, return_features=True)
+
+            dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+            cons_loss = aux_criterion(feats_orig, feats_aug)
+            total_loss = dice_loss + cons_loss
+
             optimizer.zero_grad()
-            losses.backward()
+            total_loss.backward()
             optimizer.step()
         else:
+            # Mixed precision (AMP)
             with torch.cuda.amp.autocast():
-                pred = model(img)
-                loss_dict = criterion.get_loss(pred,lbl)
-                losses = sum(loss_dict[k] * criterion.weight_dict[k] for k in loss_dict.keys())
+                logits_orig, feats_orig = model(img, return_features=True)
+                logits_aug, feats_aug = model(augmented, return_features=True)
+
+                dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+                cons_loss = aux_criterion(feats_orig, feats_aug)
+                total_loss = dice_loss + cons_loss
+
             optimizer.zero_grad()
-            grad_scaler.scale(losses).backward()
+            grad_scaler.scale(total_loss).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
 
-        metric_logger.update(**loss_dict)
+        # Update metrics
+        metric_logger.update(dice_loss=dice_loss.item(), cons_loss=cons_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        cur_iteration+=1
-        if cur_iteration>=max_iteration and max_iteration>0:
+
+        cur_iteration += 1
+        if cur_iteration >= max_iteration and max_iteration > 0:
             break
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+
     return cur_iteration
 
 
@@ -210,96 +229,65 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1,config=None,visdir=None):
     model.train()
-    criterion.train()
+    criterion = nn.DiceLoss()
+    aux_criterion = SemanticConsistencyLoss()
+    aug_module = HybridAugmentor(num_classes=5)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
-    header = 'Epoch: [{}]'.format(epoch)
+    header = f'Epoch: [{epoch}]'
     print_freq = 10
-    visual_freq = 500
+
     for i, samples in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        # Move samples to the appropriate device
         for k, v in samples.items():
             if isinstance(samples[k], torch.Tensor):
                 samples[k] = v.to(device)
 
-        GLA_img = samples['images']
-        LLA_img = samples['aug_images']
+        img = samples['images']
         lbl = samples['labels']
-        if cur_iteration % visual_freq == 0:
-            visual_dict={}
-            visual_dict['GLA']=GLA_img.detach().cpu().numpy()[0,0]
-            visual_dict['LLA']=LLA_img.detach().cpu().numpy()[0,0]
-            visual_dict['GT']=lbl.detach().cpu().numpy()[0]
+        grad_scaler = None
+        # Generate augmented sample
+        augmented = aug_module(img, lbl, cur_iteration, max_iteration)
+
+        if grad_scaler is None:
+            # Regular precision
+            logits_orig, feats_orig = model(img, return_features=True)
+            logits_aug, feats_aug = model(augmented, return_features=True)
+
+            dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+            cons_loss = aux_criterion(feats_orig, feats_aug)
+            total_loss = dice_loss + cons_loss
+
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
         else:
-            visual_dict=None
+            # Mixed precision (AMP)
+            with torch.cuda.amp.autocast():
+                logits_orig, feats_orig = model(img, return_features=True)
+                logits_aug, feats_aug = model(augmented, return_features=True)
 
-        input_var = Variable(GLA_img, requires_grad=True)
+                dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+                cons_loss = aux_criterion(feats_orig, feats_aug)
+                total_loss = dice_loss + cons_loss
 
-        optimizer.zero_grad()
-        logits = model(input_var)
-        loss_dict = criterion.get_loss(logits, lbl)
-        losses = sum(loss_dict[k] * criterion.weight_dict[k] for k in loss_dict.keys() if k in criterion.weight_dict)
-        losses.backward(retain_graph=True)
+            optimizer.zero_grad()
+            grad_scaler.scale(total_loss).backward()
+            grad_scaler.step(optimizer)
+            grad_scaler.update()
 
-        # saliency
-        gradient = torch.sqrt(torch.mean(input_var.grad ** 2, dim=1, keepdim=True)).detach()
-
-        saliency=get_SBF_map(gradient,config.grid_size)
-
-        if visual_dict is not None:
-            visual_dict['GLA_pred']=torch.argmax(logits,1).cpu().numpy()[0]
-
-        if visual_dict is not None:
-            visual_dict['GLA_saliency']= saliency.detach().cpu().numpy()[0,0]
-
-        mixed_img = GLA_img.detach() * saliency + LLA_img * (1 - saliency)
-        if visual_dict is not None:
-            visual_dict['SBF']= mixed_img.detach().cpu().numpy()[0,0]
-
-        aug_var = Variable(mixed_img, requires_grad=True)
-        aug_logits = model(aug_var)
-        aug_loss_dict = criterion.get_loss(aug_logits, lbl)
-        aug_losses = sum(aug_loss_dict[k] * criterion.weight_dict[k] for k in aug_loss_dict.keys() if k in criterion.weight_dict)
-
-        aug_losses.backward()
-
-        if visual_dict is not None:
-            visual_dict['SBF_pred'] = torch.argmax(aug_logits, 1).cpu().numpy()[0]
-
-        optimizer.step()
-
-        all_loss_dict={}
-        for k in loss_dict.keys():
-            if k not in criterion.weight_dict:continue
-            all_loss_dict[k]=loss_dict[k]
-            all_loss_dict[k+'_aug']=aug_loss_dict[k]
-
-        metric_logger.update(**all_loss_dict)
+        # Update metrics
+        metric_logger.update(dice_loss=dice_loss.item(), cons_loss=cons_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-
-        if cur_iteration>=max_iteration and max_iteration>0:
+        cur_iteration += 1
+        if cur_iteration >= max_iteration and max_iteration > 0:
             break
-
-        if visdir is not None and cur_iteration%visual_freq==0:
-            fs=int(len(visual_dict)**0.5)+1
-            for idx, k in enumerate(visual_dict.keys()):
-                plt.subplot(fs,fs,idx+1)
-                plt.title(k)
-                plt.axis('off')
-                if k not in ['GT','GLA_pred','SBF_pred']:
-                    plt.imshow(visual_dict[k], cmap='gray')
-                else:
-                    plt.imshow(visual_dict[k], vmin=0, vmax=4)
-            plt.tight_layout()
-            plt.savefig(f'{visdir}/{cur_iteration}.png')
-            plt.close()
-        cur_iteration+=1
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return cur_iteration
 
 
 @torch.no_grad()
