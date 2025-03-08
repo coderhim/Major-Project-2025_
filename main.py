@@ -249,7 +249,7 @@ if __name__ == "__main__":
         def lambda_rule(epoch):
             lr_l = 1.0 - max(0, epoch + 1 + 0 - 50) / float(optimizer_config.max_epoch-50 + 1)
             return lr_l
-        scheduler = lr_scheduler.LambdaLR(opt, lr_lambda=lambda_rule)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=100)
     else:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=100)
         print('We follow the SSDG learning rate schedule by default, you can add your own schedule by yourself')
