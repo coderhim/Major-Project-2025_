@@ -80,12 +80,12 @@ def bezier_transform(self, x, masks, control_points=3):
 
     return transformed
 
-    def adaptive_threshold(self, epoch, total_epochs):
+def adaptive_threshold(self, epoch, total_epochs):
         """Sigmoidal curriculum learning for saliency threshold"""
         t = epoch / total_epochs
         return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
 
-    def forward(self, x, masks, epoch, total_epochs):
+def forward(self, x, masks, epoch, total_epochs):
         # Phase 1: Class-aware nonlinear mixup
         mixed_x, lam = self.class_aware_mixup(x, masks)
         
