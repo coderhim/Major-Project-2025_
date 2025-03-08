@@ -46,66 +46,66 @@ class HybridAugmentor(nn.Module):
             
         return mixed_x, lam
     
-def bezier_curve(control_points, num_points=100):
-    """Compute Bézier curve using De Casteljau’s algorithm."""
-    def de_casteljau(t, points):
-        while len(points) > 1:
-            points = [(1 - t) * p + t * q for p, q in zip(points[:-1], points[1:])]
-        return points[0]
+    def bezier_curve(control_points, num_points=100):
+        """Compute Bézier curve using De Casteljau’s algorithm."""
+        def de_casteljau(t, points):
+            while len(points) > 1:
+                points = [(1 - t) * p + t * q for p, q in zip(points[:-1], points[1:])]
+            return points[0]
 
-    t_values = np.linspace(0, 1, num_points)
-    curve = np.array([de_casteljau(t, control_points) for t in t_values])
-    return curve
+        t_values = np.linspace(0, 1, num_points)
+        curve = np.array([de_casteljau(t, control_points) for t in t_values])
+        return curve
 
-def bezier_transform(self, x, masks, control_points=3):
-    """Class-specific Bézier curve transformation."""
-    B, C, H, W = x.shape
-    transformed = torch.zeros_like(x)
+    def bezier_transform(self, x, masks, control_points=3):
+        """Class-specific Bézier curve transformation."""
+        B, C, H, W = x.shape
+        transformed = torch.zeros_like(x)
 
-    for c in range(self.num_classes):
-        mask = masks[:, c].unsqueeze(1)
+        for c in range(self.num_classes):
+            mask = masks[:, c].unsqueeze(1)
 
-        # Random control points for Bézier
-        nodes = np.random.uniform(0, 1, (control_points, 2))
-        bezier_points = bezier_curve(nodes, num_points=H * W)
+            # Random control points for Bézier
+            nodes = np.random.uniform(0, 1, (control_points, 2))
+            bezier_points = bezier_curve(nodes, num_points=H * W)
 
-        sampled_x = bezier_points[:, 0].reshape(H, W)
-        sampled_y = bezier_points[:, 1].reshape(H, W)
+            sampled_x = bezier_points[:, 0].reshape(H, W)
+            sampled_y = bezier_points[:, 1].reshape(H, W)
 
-        # Apply affine transformation using the Bézier outputs
-        warped = TF.affine(x, angle=0, translate=[0, 0], scale=1, shear=sampled_x)
-        warped = TF.affine(warped, angle=0, translate=[0, 0], scale=1, shear=sampled_y)
+            # Apply affine transformation using the Bézier outputs
+            warped = TF.affine(x, angle=0, translate=[0, 0], scale=1, shear=sampled_x)
+            warped = TF.affine(warped, angle=0, translate=[0, 0], scale=1, shear=sampled_y)
 
-        transformed += mask * warped
+            transformed += mask * warped
 
-    return transformed
+        return transformed
 
-def adaptive_threshold(self, epoch, total_epochs):
-        """Sigmoidal curriculum learning for saliency threshold"""
-        t = epoch / total_epochs
-        return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
+    def adaptive_threshold(self, epoch, total_epochs):
+            """Sigmoidal curriculum learning for saliency threshold"""
+            t = epoch / total_epochs
+            return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
 
-def forward(self, x, masks, epoch, total_epochs):
-        # Phase 1: Class-aware nonlinear mixup
-        mixed_x, lam = self.class_aware_mixup(x, masks)
-        
-        # Phase 2: Location-scale transformation
-        global_aug = self.bezier_transform(mixed_x, masks)
-        local_aug = self.bezier_transform(x, masks)
-        
-        # Controller-adjusted parameters
-        control_params = self.controller(torch.tensor([lam, epoch/total_epochs, 
-                                                      global_aug.mean(), local_aug.std()]))
-        alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
-        
-        # Adaptive saliency fusion
-        with torch.enable_grad():
-            grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True)[0]
-        saliency = (grad_global.abs().mean(1, keepdim=True) > 
-                   self.adaptive_threshold(epoch, total_epochs)).float()
-        
-        fused = saliency * global_aug + (1 - saliency) * local_aug
-        return fused
+    def forward(self, x, masks, epoch, total_epochs):
+            # Phase 1: Class-aware nonlinear mixup
+            mixed_x, lam = self.class_aware_mixup(x, masks)
+            
+            # Phase 2: Location-scale transformation
+            global_aug = self.bezier_transform(mixed_x, masks)
+            local_aug = self.bezier_transform(x, masks)
+            
+            # Controller-adjusted parameters
+            control_params = self.controller(torch.tensor([lam, epoch/total_epochs, 
+                                                        global_aug.mean(), local_aug.std()]))
+            alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
+            
+            # Adaptive saliency fusion
+            with torch.enable_grad():
+                grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True)[0]
+            saliency = (grad_global.abs().mean(1, keepdim=True) > 
+                    self.adaptive_threshold(epoch, total_epochs)).float()
+            
+            fused = saliency * global_aug + (1 - saliency) * local_aug
+            return fused
 
 class SemanticConsistencyLoss(nn.Module):
     def __init__(self, feat_layers=[1,3,5], weight=0.3):
