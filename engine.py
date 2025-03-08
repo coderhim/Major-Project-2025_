@@ -45,27 +45,40 @@ class HybridAugmentor(nn.Module):
             mixed_x += mask * (lam * x + (1-lam) * x[perm]) + (1-mask) * x
             
         return mixed_x, lam
+    
+def bezier_curve(control_points, num_points=100):
+    """Compute Bézier curve using De Casteljau’s algorithm."""
+    def de_casteljau(t, points):
+        while len(points) > 1:
+            points = [(1 - t) * p + t * q for p, q in zip(points[:-1], points[1:])]
+        return points[0]
 
-    def bezier_transform(self, x, masks, control_points=3):
-        """Class-specific Bézier curve transformation"""
-        B, C, H, W = x.shape
-        transformed = torch.zeros_like(x)
-        
-        for c in range(self.num_classes):
-            mask = masks[:,c].unsqueeze(1)
-            nodes = np.random.uniform(0, 1, (2, control_points))
-            curve = bezier.Curve(nodes, degree=control_points-1)
-            t_values = torch.linspace(0, 1, H*W)
-            sampled_points = curve.evaluate_multi(t_values).T.reshape(H,W,2)
-            
-            # Apply transform to masked regions
-            warped = TF.affine(x, angle=0, translate=[0,0], 
-                             scale=1, shear=sampled_points[...,0])
-            warped = TF.affine(warped, angle=0, translate=[0,0],
-                             scale=1, shear=sampled_points[...,1])
-            transformed += mask * warped
-            
-        return transformed
+    t_values = np.linspace(0, 1, num_points)
+    curve = np.array([de_casteljau(t, control_points) for t in t_values])
+    return curve
+
+def bezier_transform(self, x, masks, control_points=3):
+    """Class-specific Bézier curve transformation."""
+    B, C, H, W = x.shape
+    transformed = torch.zeros_like(x)
+
+    for c in range(self.num_classes):
+        mask = masks[:, c].unsqueeze(1)
+
+        # Random control points for Bézier
+        nodes = np.random.uniform(0, 1, (control_points, 2))
+        bezier_points = bezier_curve(nodes, num_points=H * W)
+
+        sampled_x = bezier_points[:, 0].reshape(H, W)
+        sampled_y = bezier_points[:, 1].reshape(H, W)
+
+        # Apply affine transformation using the Bézier outputs
+        warped = TF.affine(x, angle=0, translate=[0, 0], scale=1, shear=sampled_x)
+        warped = TF.affine(warped, angle=0, translate=[0, 0], scale=1, shear=sampled_y)
+
+        transformed += mask * warped
+
+    return transformed
 
     def adaptive_threshold(self, epoch, total_epochs):
         """Sigmoidal curriculum learning for saliency threshold"""
