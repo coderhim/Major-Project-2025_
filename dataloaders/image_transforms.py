@@ -3,7 +3,7 @@ Image transforms functions for data augmentation
 Credit to Dr. Jo Schlemper
 """
 
-from collections import Sequence
+from collections.abc import Sequence
 import cv2
 import numpy as np
 import scipy
