@@ -127,6 +127,63 @@ class DataModuleFromConfig(torch.nn.Module):
 
 torch.backends.cudnn.benchmark = True
 
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+class UNetWithResNet50Encoder(nn.Module):
+    def __init__(self, num_classes, pretrained=True):
+        super(UNetWithResNet50Encoder, self).__init__()
+        # Load pre-trained ResNet50 model
+        resnet = models.resnet50(pretrained=pretrained)
+        
+        # Modify the first convolutional layer to accept single-channel input
+        self.encoder = nn.Sequential()
+        self.encoder.add_module('conv1', nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False))
+        self.encoder.add_module('bn1', resnet.bn1)
+        self.encoder.add_module('relu', resnet.relu)
+        self.encoder.add_module('maxpool', resnet.maxpool)
+        self.encoder.add_module('layer1', resnet.layer1)
+        self.encoder.add_module('layer2', resnet.layer2)
+        self.encoder.add_module('layer3', resnet.layer3)
+        self.encoder.add_module('layer4', resnet.layer4)
+        
+        # Decoder
+        self.upconv4 = self._upconv(2048, 1024)
+        self.upconv3 = self._upconv(1024, 512)
+        self.upconv2 = self._upconv(512, 256)
+        self.upconv1 = self._upconv(256, 64)
+        self.final_conv = nn.Conv2d(64, num_classes, kernel_size=1)
+        
+    def _upconv(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+            nn.ReLU(inplace=True)
+        )
+    
+    def forward(self, x, return_features=False):
+        # Encoder
+        conv1 = self.encoder.conv1(x)
+        bn1 = self.encoder.bn1(conv1)
+        relu = self.encoder.relu(bn1)
+        maxpool = self.encoder.maxpool(relu)
+        layer1 = self.encoder.layer1(maxpool)
+        layer2 = self.encoder.layer2(layer1)
+        layer3 = self.encoder.layer3(layer2)
+        layer4 = self.encoder.layer4(layer3)
+        
+        # Decoder
+        up4 = self.upconv4(layer4)
+        up3 = self.upconv3(up4 + layer3)
+        up2 = self.upconv2(up3 + layer2)
+        up1 = self.upconv1(up2 + layer1)
+        logits = self.final_conv(up1 + relu)
+        
+        if return_features:
+            return logits, layer4
+        else:
+            return logits
+
 if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     sys.path.append(os.getcwd())
@@ -162,7 +219,8 @@ if __name__ == "__main__":
 
     SBF_config = config.pop('saliency_balancing_fusion',OmegaConf.create())
 
-    model = instantiate_from_config(model_config)
+    # model = instantiate_from_config(model_config)
+    model = UNetWithResNet50Encoder(num_classes=5, pretrained=True)
     if torch.cuda.is_available():
         model=model.cuda()
 
