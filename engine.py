@@ -42,6 +42,8 @@ class HybridAugmentor(nn.Module):
         mixed_x = torch.zeros_like(x)
         for c in range(self.num_classes):
             mask = masks[:,c].unsqueeze(1)
+            print("Shape of X is :",x.shape)
+            print("shape of mask  is : ", mask.shape)
             mixed_x += mask * (lam * x + (1-lam) * x[perm]) + (1-mask) * x
             
         return mixed_x, lam
