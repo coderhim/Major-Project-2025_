@@ -308,6 +308,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         img = samples['images']
         lbl = samples['labels']
+        print("Image shape", img.shape)
+        print("Label shape", lbl.shape)
         grad_scaler = None
         # Generate augmented sample
         augmented = aug_module(img, lbl, cur_iteration, max_iteration)
