@@ -8,6 +8,7 @@ import functools
 from tqdm import tqdm
 import torch.nn.functional as F
 from monai.metrics import compute_meandice
+from monai.losses import DiceLoss
 from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
 print = functools.partial(print, flush=True)
@@ -18,7 +19,7 @@ import torch.nn.functional as F
 from torchvision.transforms import functional as TF
 # import bezier
 import numpy as np
-
+dice_loss = DiceLoss(to_onehot_y=False,softmax=True,squared_pred=True,smooth_nr=0.0,smooth_dr=1e-6)
 class HybridAugmentor(nn.Module):
     def __init__(self, num_classes, tau_max=0.7, tau_min=0.3, gamma=5.0):
         super().__init__()
@@ -63,7 +64,7 @@ class HybridAugmentor(nn.Module):
         """
         batch_size, _, height, width = x.shape
         num_classes = masks.shape[1]
-
+        
         # Sample lambda from Beta distribution
         lam = np.random.beta(alpha, alpha)
 
@@ -84,7 +85,8 @@ class HybridAugmentor(nn.Module):
         for c in range(1, num_classes + 1):
             # Identify pixels belonging to class 'c'
             class_mask = (masks[:, c - 1] == 1).unsqueeze(1)  # Shape: [32, 1, 192, 192]
-
+            print("Shape of class mask: ",class_mask.shape)
+            print("Shape of x : ",x.shape)
             # Skip if no pixels for this class
             if class_mask.sum() == 0:
                 continue
@@ -312,6 +314,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         print("Label shape", lbl.shape)
         grad_scaler = None
         # Generate augmented sample
+        lbl = F.one_hot(lbl,5).permute((0,3,1,2))
+        print("Label shape now", lbl.shape)
         augmented = aug_module(img, lbl, cur_iteration, max_iteration)
 
         if grad_scaler is None:
@@ -319,7 +323,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             logits_orig, feats_orig = model(img, return_features=True)
             logits_aug, feats_aug = model(augmented, return_features=True)
 
-            dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+
+            dice_loss = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
             cons_loss = aux_criterion(feats_orig, feats_aug)
             total_loss = dice_loss + cons_loss
 
@@ -332,7 +337,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 logits_orig, feats_orig = model(img, return_features=True)
                 logits_aug, feats_aug = model(augmented, return_features=True)
 
-                dice_loss = criterion.get_loss(logits_orig, lbl) + criterion.get_loss(logits_aug, lbl)
+                dice_loss = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
                 cons_loss = aux_criterion(feats_orig, feats_aug)
                 total_loss = dice_loss + cons_loss
 
