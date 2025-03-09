@@ -32,20 +32,66 @@ class HybridAugmentor(nn.Module):
             nn.Linear(16, 3)
         )  # Progressive augmentation controller
 
-    def class_aware_mixup(self, x, masks, alpha=0.4):
-        """Class-aware nonlinear mixup augmentation"""
-        batch_size = x.size(0)
-        lam = np.random.beta(alpha, alpha)
+    # def class_aware_mixup(self, x, masks, alpha=0.4):
+    #     """Class-aware nonlinear mixup augmentation"""
+    #     batch_size = x.size(0)
+    #     lam = np.random.beta(alpha, alpha)
         
-        # Generate mixed image using class-specific masks
-        perm = torch.randperm(batch_size)
-        mixed_x = torch.zeros_like(x)
-        for c in range(self.num_classes):
-            mask = masks[:,c].unsqueeze(1)
-            print("Shape of X is :",x.shape)
-            print("shape of mask  is : ", mask.shape)
-            mixed_x += mask * (lam * x + (1-lam) * x[perm]) + (1-mask) * x
+    #     # Generate mixed image using class-specific masks
+    #     perm = torch.randperm(batch_size)
+    #     mixed_x = torch.zeros_like(x)
+    #     for c in range(self.num_classes):
+    #         mask = masks[:,c].unsqueeze(1)
+    #         print("Shape of X is :",x.shape)
+    #         print("shape of mask  is : ", mask.shape)
+    #         mixed_x += mask * (lam * x + (1-lam) * x[perm]) + (1-mask) * x
             
+    #     return mixed_x, lam
+    
+    def class_aware_mixup(self, x, masks, alpha=0.4):
+        """
+        Class-aware Mixup for multi-class foreground and background handling.
+
+        Parameters:
+        - x: Input tensor [batch_size, 1, 192, 192]
+        - masks: Class mask [batch_size, 5, 192, 192] (0 for background)
+        - alpha: Beta distribution parameter for λ
+
+        Returns:
+        - mixed_x: Mixed image
+        - lam: Mixing coefficient
+        """
+        batch_size, _, height, width = x.shape
+        num_classes = masks.shape[1]
+
+        # Sample lambda from Beta distribution
+        lam = np.random.beta(alpha, alpha)
+
+        # Shuffle for mixup
+        perm = torch.randperm(batch_size)
+
+        # Ensure mask size matches input
+        masks = masks[:, :, :height, :width]
+
+        # Initialize output
+        mixed_x = torch.zeros_like(x)
+
+        # Handle background (mask == 0)
+        background_mask = (masks.sum(dim=1, keepdim=True) == 0)
+        mixed_x += background_mask * x
+
+        # Iterate through each foreground class (mask > 0)
+        for c in range(1, num_classes + 1):
+            # Identify pixels belonging to class 'c'
+            class_mask = (masks[:, c - 1] == 1).unsqueeze(1)  # Shape: [32, 1, 192, 192]
+
+            # Skip if no pixels for this class
+            if class_mask.sum() == 0:
+                continue
+
+            # Apply class-aware mixup
+            mixed_x += class_mask * (lam * x + (1 - lam) * x[perm])
+
         return mixed_x, lam
     
     def bezier_curve(control_points, num_points=100):
