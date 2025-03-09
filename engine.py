@@ -85,8 +85,8 @@ class HybridAugmentor(nn.Module):
         for c in range(1, num_classes + 1):
             # Identify pixels belonging to class 'c'
             class_mask = (masks[:, c - 1] == 1).unsqueeze(1)  # Shape: [32, 1, 192, 192]
-            print("Shape of class mask: ",class_mask.shape)
-            print("Shape of x : ",x.shape)
+            # print("Shape of class mask: ",class_mask.shape)
+            # print("Shape of x : ",x.shape)
             # Skip if no pixels for this class
             if class_mask.sum() == 0:
                 continue
@@ -96,7 +96,7 @@ class HybridAugmentor(nn.Module):
 
         return mixed_x, lam
     
-    def bezier_curve(control_points, num_points=100):
+    def bezier_curve(self, control_points, num_points=100):
         """Compute Bézier curve using De Casteljau’s algorithm."""
         def de_casteljau(t, points):
             while len(points) > 1:
@@ -117,7 +117,7 @@ class HybridAugmentor(nn.Module):
 
             # Random control points for Bézier
             nodes = np.random.uniform(0, 1, (control_points, 2))
-            bezier_points = bezier_curve(nodes, num_points=H * W)
+            bezier_points =self.bezier_curve(nodes, num_points=H * W)
 
             sampled_x = bezier_points[:, 0].reshape(H, W)
             sampled_y = bezier_points[:, 1].reshape(H, W)
@@ -310,12 +310,12 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         img = samples['images']
         lbl = samples['labels']
-        print("Image shape", img.shape)
-        print("Label shape", lbl.shape)
+        # print("Image shape", img.shape)
+        # print("Label shape", lbl.shape)
         grad_scaler = None
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
-        print("Label shape now", lbl.shape)
+        # print("Label shape now", lbl.shape)
         augmented = aug_module(img, lbl, cur_iteration, max_iteration)
 
         if grad_scaler is None:
