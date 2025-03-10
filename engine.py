@@ -20,6 +20,8 @@ from torchvision.transforms import functional as TF
 # import bezier
 import numpy as np
 dice_loss = DiceLoss(to_onehot_y=False,softmax=True,squared_pred=True,smooth_nr=0.0,smooth_dr=1e-6)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 class HybridAugmentor(nn.Module):
     def __init__(self, num_classes, tau_max=0.7, tau_min=0.3, gamma=5.0):
         super().__init__()
@@ -69,7 +71,7 @@ class HybridAugmentor(nn.Module):
         lam = np.random.beta(alpha, alpha)
 
         # Shuffle for mixup
-        perm = torch.randperm(batch_size)
+        perm = torch.randperm(batch_size, device=device)
 
         # Ensure mask size matches input
         masks = masks[:, :, :height, :width]
@@ -154,8 +156,8 @@ class HybridAugmentor(nn.Module):
         
         # Create normalized sampling grid (from -1 to 1)
         grid_y, grid_x = torch.meshgrid(
-            torch.linspace(-1, 1, H),
-            torch.linspace(-1, 1, W),
+            torch.linspace(-1, 1, H, device=device),
+            torch.linspace(-1, 1, W, device=device),
             indexing='ij'
         )
         base_grid = torch.stack([grid_x, grid_y], dim=2).to(x.device)
@@ -167,7 +169,7 @@ class HybridAugmentor(nn.Module):
             nodes = np.random.uniform(0, 1, (2, control_points))
             
             # Create t values corresponding to flattened image pixels
-            t_values = torch.linspace(0, 1, H*W)
+            t_values = torch.linspace(0, 1, H*W, device=device)
             
             # Evaluate Bezier curve for each t value (using numpy for simplicity)
             curve_points = np.zeros((H*W, 2))
@@ -179,7 +181,7 @@ class HybridAugmentor(nn.Module):
             
             # Convert to displacement field (scaled to reasonable values)
             # Normalize to range -0.2 to 0.2 for displacement
-            displacement_field = torch.from_numpy(curve_points).float().to(x.device) - 0.5
+            displacement_field = torch.from_numpy(curve_points).float().to(device) - 0.5
             displacement_field = displacement_field * 0.4  # Scale factor to control deformation strength
             
             # Apply the displacement to base grid
@@ -205,7 +207,6 @@ class HybridAugmentor(nn.Module):
             return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
 
     def forward(self, x, masks, epoch, total_epochs):
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
             # Phase 1: Class-aware nonlinear mixup
             mixed_x, lam = self.class_aware_mixup(x, masks)
@@ -219,10 +220,10 @@ class HybridAugmentor(nn.Module):
 
             # Controller-adjusted parameters (keep in computational graph)
             control_params = self.controller(torch.stack([
-                torch.tensor(lam, device=global_aug.device),  # Convert lam to a tensor
-                torch.tensor(epoch / total_epochs, device=global_aug.device),
-                global_aug.mean(),
-                local_aug.std()
+                torch.tensor(lam, device=device),  # Convert lam to a tensor
+                torch.tensor(epoch / total_epochs, device=device),
+                global_aug.mean().to(device),
+                local_aug.std().to(device)
             ]))
 
 
@@ -258,7 +259,11 @@ def train_warm_up(model: torch.nn.Module, criterion: torch.nn.Module,
     model.train()
     criterion.train()
     aux_criterion = SemanticConsistencyLoss()
+    aux_criterion.to(device)
+
     aug_module = HybridAugmentor(num_classes=5)
+    aug_module.to(device)
+
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
@@ -377,6 +382,9 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
     aux_criterion = SemanticConsistencyLoss()
     aug_module = HybridAugmentor(num_classes=5)
 
+    aug_module.to(device)
+    aux_criterion.to(device)
+
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
@@ -395,7 +403,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         # print("Label shape", lbl.shape)
         grad_scaler = None
         # Generate augmented sample
-        lbl = F.one_hot(lbl,5).permute((0,3,1,2))
+        lbl = F.one_hot(lbl,5).permute((0,3,1,2)).to(device)
         # print("Label shape now", lbl.shape)
         augmented = aug_module(img, lbl, cur_iteration, max_iteration)
 
