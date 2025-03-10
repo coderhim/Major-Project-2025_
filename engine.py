@@ -212,17 +212,22 @@ class HybridAugmentor(nn.Module):
             global_aug = self.bezier_transform(mixed_x, masks)
             local_aug = self.bezier_transform(x, masks)
             
-            # Controller-adjusted parameters
-            control_params = self.controller(torch.tensor([lam, epoch/total_epochs, 
+            ## Ensure 'global_aug' retains gradients
+            global_aug.requires_grad_(True)
+
+            # Controller-adjusted parameters (keep in computational graph)
+            control_params = self.controller(torch.stack([lam, epoch/total_epochs, 
                                                         global_aug.mean(), local_aug.std()]))
+
             alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
-            
-            # Adaptive saliency fusion
-            with torch.enable_grad():
-                grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True)[0]
-            saliency = (grad_global.abs().mean(1, keepdim=True) > 
-                    self.adaptive_threshold(epoch, total_epochs)).float()
-            
+
+            # Compute saliency map without detaching the graph
+            grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True, retain_graph=True)[0]
+
+            # Apply adaptive saliency threshold
+            saliency = (grad_global.abs().mean(1, keepdim=True) > self.adaptive_threshold(epoch, total_epochs)).float()
+
+            # Fused output
             fused = saliency * global_aug + (1 - saliency) * local_aug
             return fused
 
