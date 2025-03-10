@@ -405,9 +405,11 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # logits_orig, feats_orig = model(img, return_features=True)
             # logits_aug, feats_aug = model(augmented, return_features=True)
             logits_orig = model(img)
-            feats_orig = model.encoder(img)
+            feats_orig_list = model.encoder(img)
+            feats_orig = feats_orig_list[-1] #last feature map
             logits_aug = model(augmented)
-            feats_aug = model.encoder(augmented)
+            feats_aug_list = model.encoder(augmented)
+            feats_aug = feats_aug_list[-1]
 
             # Note the change here - using the global dice_loss function but storing result in dice_loss_value
             print("model Output Shape : ", logits_orig.shape)
