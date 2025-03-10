@@ -205,6 +205,8 @@ class HybridAugmentor(nn.Module):
             return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
 
     def forward(self, x, masks, epoch, total_epochs):
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
             # Phase 1: Class-aware nonlinear mixup
             mixed_x, lam = self.class_aware_mixup(x, masks)
             
@@ -216,8 +218,13 @@ class HybridAugmentor(nn.Module):
             global_aug.requires_grad_(True)
 
             # Controller-adjusted parameters (keep in computational graph)
-            control_params = self.controller(torch.stack([lam, epoch/total_epochs, 
-                                                        global_aug.mean(), local_aug.std()]))
+            control_params = self.controller(torch.stack([
+                torch.tensor(lam, device=global_aug.device),  # Convert lam to a tensor
+                torch.tensor(epoch / total_epochs, device=global_aug.device),
+                global_aug.mean(),
+                local_aug.std()
+            ]))
+
 
             alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
 
