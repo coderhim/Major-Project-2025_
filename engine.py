@@ -378,7 +378,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
     model.train()
     criterion.train()
     aux_criterion = SemanticConsistencyLoss()
-    aug_module = HybridAugmentor(num_classes=5).to(device)
+    aug_module = HybridAugmentor(num_classes=5).to(device)  # Move to the same device
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -394,12 +394,10 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         img = samples['images']
         lbl = samples['labels']
-        # print("Image shape", img.shape)
-        # print("Label shape", lbl.shape)
         grad_scaler = None
+        
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
-        # print("Label shape now", lbl.shape)
         augmented = aug_module(img, lbl, cur_iteration, max_iteration)
 
         if grad_scaler is None:
@@ -407,10 +405,10 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             logits_orig, feats_orig = model(img, return_features=True)
             logits_aug, feats_aug = model(augmented, return_features=True)
 
-
-            dice_loss = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
+            # Note the change here - using the global dice_loss function but storing result in dice_loss_value
+            dice_loss_value = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
             cons_loss = aux_criterion(feats_orig, feats_aug)
-            total_loss = dice_loss + cons_loss
+            total_loss = dice_loss_value + cons_loss
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -421,17 +419,18 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 logits_orig, feats_orig = model(img, return_features=True)
                 logits_aug, feats_aug = model(augmented, return_features=True)
 
-                dice_loss = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
+                # Same change here
+                dice_loss_value = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
                 cons_loss = aux_criterion(feats_orig, feats_aug)
-                total_loss = dice_loss + cons_loss
+                total_loss = dice_loss_value + cons_loss
 
             optimizer.zero_grad()
             grad_scaler.scale(total_loss).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
 
-        # Update metrics
-        metric_logger.update(dice_loss=dice_loss.item(), cons_loss=cons_loss.item())
+        # Update metrics - change variable name here too
+        metric_logger.update(dice_loss=dice_loss_value.item(), cons_loss=cons_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         cur_iteration += 1
@@ -440,7 +439,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-
+    
+    return cur_iteration
 
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, data_loader: Iterable, device: torch.device):
