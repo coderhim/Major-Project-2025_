@@ -130,6 +130,9 @@ torch.backends.cudnn.benchmark = True
 import torch
 import torch.nn as nn
 import torchvision.models as models
+import torch
+import torch.nn.functional as F # Import the necessary module
+
 class UNetWithResNet50Encoder(nn.Module):
     def __init__(self, num_classes, pretrained=True):
         super(UNetWithResNet50Encoder, self).__init__()
@@ -190,7 +193,7 @@ class UNetWithResNet50Encoder(nn.Module):
         
         # Apply final 1x1 convolution to get output classes
         logits = self.final_conv(up_final)
-        
+        print("logits shape IN the model :", logits.shape)
         # Ensure output size matches input size
         if logits.size()[2:] != input_size[2:]:
             logits = F.interpolate(logits, size=input_size[2:], mode='bilinear', align_corners=True)
