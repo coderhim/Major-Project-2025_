@@ -402,8 +402,12 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         if grad_scaler is None:
             # Regular precision
-            logits_orig, feats_orig = model(img, return_features=True)
-            logits_aug, feats_aug = model(augmented, return_features=True)
+            # logits_orig, feats_orig = model(img, return_features=True)
+            # logits_aug, feats_aug = model(augmented, return_features=True)
+            logits_orig = model(img)
+            feats_orig = model.encoder(img)
+            logits_aug = model(augmented)
+            feats_aug = model.encoder(augmented)
 
             # Note the change here - using the global dice_loss function but storing result in dice_loss_value
             print("model Output Shape : ", logits_orig.shape)
@@ -421,9 +425,12 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             # Mixed precision (AMP)
             with torch.cuda.amp.autocast():
-                logits_orig, feats_orig = model(img, return_features=True)
-                logits_aug, feats_aug = model(augmented, return_features=True)
-
+                # logits_orig, feats_orig = model(img, return_features=True)
+                # logits_aug, feats_aug = model(augmented, return_features=True)
+                logits_orig = model(img)
+                feats_orig = model.encoder(img)
+                logits_aug = model(augmented)
+                feats_aug = model.encoder(augmented)
                 # Same change here
                 dice_loss_value = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
                 cons_loss = aux_criterion(feats_orig, feats_aug)
