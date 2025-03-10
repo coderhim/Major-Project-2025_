@@ -95,39 +95,108 @@ class HybridAugmentor(nn.Module):
             mixed_x += class_mask * (lam * x + (1 - lam) * x[perm])
 
         return mixed_x, lam
-    
-    def bezier_curve(self, control_points, num_points=100):
-        """Compute Bézier curve using De Casteljau’s algorithm."""
-        def de_casteljau(t, points):
-            while len(points) > 1:
-                points = [(1 - t) * p + t * q for p, q in zip(points[:-1], points[1:])]
-            return points[0]
-
-        t_values = np.linspace(0, 1, num_points)
-        curve = np.array([de_casteljau(t, control_points) for t in t_values])
-        return curve
-
+        
     def bezier_transform(self, x, masks, control_points=3):
-        """Class-specific Bézier curve transformation."""
+        """
+        Class-specific Bézier curve transformation without using the bezier library.
+        Uses grid sampling to achieve per-pixel deformations similar to the original.
+        
+        Args:
+            x: Input tensor of shape [B, C, H, W]
+            masks: Class-specific masks of shape [B, num_classes, H, W]
+            control_points: Number of control points for the Bézier curve
+        
+        Returns:
+            Transformed tensor of the same shape as input
+        """
+        import torch.nn.functional as F
+        
         B, C, H, W = x.shape
         transformed = torch.zeros_like(x)
-
+        
+        # Bernstein polynomial basis function
+        def bernstein_poly(i, n, t):
+            """
+            Bernstein polynomial of degree n, term i.
+            
+            Args:
+                i: Index of the term
+                n: Degree of polynomial
+                t: Parameter value (0 to 1)
+                
+            Returns:
+                Value of the Bernstein polynomial at t
+            """
+            from math import comb
+            return comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
+        
+        # Evaluate Bezier curve for a specific t value
+        def bezier_curve_point(t, control_points_array):
+            """
+            Calculate point on Bezier curve for parameter t.
+            
+            Args:
+                t: Parameter value (0 to 1)
+                control_points_array: Control points array of shape [2, n_points]
+                
+            Returns:
+                Point coordinates [x, y]
+            """
+            n = control_points_array.shape[1] - 1
+            point = np.zeros(2)
+            
+            for i in range(n + 1):
+                coef = bernstein_poly(i, n, t)
+                point[0] += control_points_array[0, i] * coef
+                point[1] += control_points_array[1, i] * coef
+                
+            return point
+        
+        # Create normalized sampling grid (from -1 to 1)
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(-1, 1, H),
+            torch.linspace(-1, 1, W),
+            indexing='ij'
+        )
+        base_grid = torch.stack([grid_x, grid_y], dim=2).to(x.device)
+        
         for c in range(self.num_classes):
             mask = masks[:, c].unsqueeze(1)
-
-            # Random control points for Bézier
-            nodes = np.random.uniform(0, 1, (control_points, 2))
-            bezier_points =self.bezier_curve(nodes, num_points=H * W)
-
-            sampled_x = bezier_points[:, 0].reshape(H, W)
-            sampled_y = bezier_points[:, 1].reshape(H, W)
-
-            # Apply affine transformation using the Bézier outputs
-            warped = TF.affine(x, angle=0, translate=[0, 0], scale=1, shear=sampled_x)
-            warped = TF.affine(warped, angle=0, translate=[0, 0], scale=1, shear=sampled_y)
-
+            
+            # Generate random control points
+            nodes = np.random.uniform(0, 1, (2, control_points))
+            
+            # Create t values corresponding to flattened image pixels
+            t_values = torch.linspace(0, 1, H*W)
+            
+            # Evaluate Bezier curve for each t value (using numpy for simplicity)
+            curve_points = np.zeros((H*W, 2))
+            for i, t in enumerate(t_values.numpy()):
+                curve_points[i] = bezier_curve_point(t, nodes)
+            
+            # Reshape to match image dimensions
+            curve_points = curve_points.reshape(H, W, 2)
+            
+            # Convert to displacement field (scaled to reasonable values)
+            # Normalize to range -0.2 to 0.2 for displacement
+            displacement_field = torch.from_numpy(curve_points).float().to(x.device) - 0.5
+            displacement_field = displacement_field * 0.4  # Scale factor to control deformation strength
+            
+            # Apply the displacement to base grid
+            sampling_grid = base_grid.clone().repeat(B, 1, 1, 1)
+            sampling_grid += displacement_field.unsqueeze(0).repeat(B, 1, 1, 1)
+            
+            # Use grid_sample to apply the deformation
+            warped = F.grid_sample(
+                x, 
+                sampling_grid,
+                mode='bilinear', 
+                padding_mode='border',
+                align_corners=True
+            )
+            
             transformed += mask * warped
-
+        
         return transformed
 
     def adaptive_threshold(self, epoch, total_epochs):
