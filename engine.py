@@ -198,15 +198,18 @@ class HybridAugmentor(nn.Module):
             transformed += mask * warped
         
         return transformed
-
+    
+    def to(self, device):
+        self.controller = self.controller.to(device)
+        return self
     def adaptive_threshold(self, epoch, total_epochs):
             """Sigmoidal curriculum learning for saliency threshold"""
             t = epoch / total_epochs
             return self.tau_min + (self.tau_max - self.tau_min) * (2/(1 + np.exp(-self.gamma*t)) - 1)
 
     def forward(self, x, masks, epoch, total_epochs):
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+            # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            device = x.device
             # Phase 1: Class-aware nonlinear mixup
             mixed_x, lam = self.class_aware_mixup(x, masks)
             
@@ -219,8 +222,8 @@ class HybridAugmentor(nn.Module):
 
             # Controller-adjusted parameters (keep in computational graph)
             control_params = self.controller(torch.stack([
-                torch.tensor(lam, device=global_aug.device),  # Convert lam to a tensor
-                torch.tensor(epoch / total_epochs, device=global_aug.device),
+                torch.tensor(lam, device=device),  # Convert lam to a tensor
+                torch.tensor(epoch / total_epochs, device=device),
                 global_aug.mean(),
                 local_aug.std()
             ]))
@@ -375,7 +378,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
     model.train()
     criterion.train()
     aux_criterion = SemanticConsistencyLoss()
-    aug_module = HybridAugmentor(num_classes=5)
+    aug_module = HybridAugmentor(num_classes=5).to(device)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
