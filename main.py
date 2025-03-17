@@ -9,6 +9,12 @@ import numpy as np
 import random
 from torch.optim import lr_scheduler
 
+train_dice_losses = []
+train_cons_losses = []
+train_lrs = []
+val_dice_losses = []
+val_epochs = []  # To track when validation happens
+
 def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
@@ -85,6 +91,53 @@ def instantiate_from_config(config):
     if not "target" in config:
         raise KeyError("Expected key `target` to instantiate.")
     return get_obj_from_str(config["target"])(**config.get("params", dict()))
+
+import matplotlib.pyplot as plt
+
+def plot_training_curves(train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs):
+    """
+    Plots training Dice Loss, Consistency Loss, and Learning Rate over iterations.
+    Also plots validation Dice Loss at specified validation epochs.
+
+    Args:
+        train_dice_losses (list): List of training Dice Loss values.
+        train_cons_losses (list): List of training Consistency Loss values.
+        train_lrs (list): List of recorded learning rates.
+        val_dice_losses (list): List of validation Dice Loss values.
+        val_epochs (list): List of epochs where validation was performed.
+    """
+    
+    # Plot Training Dice Loss with Validation Dice Loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(len(train_dice_losses)), train_dice_losses, label="Train Dice Loss", color='blue')
+    
+    if val_dice_losses and val_epochs:
+        plt.scatter(val_epochs, val_dice_losses, label="Validation Dice Loss", color='red', marker='o')
+    
+    plt.xlabel("Iterations")
+    plt.ylabel("Dice Loss")
+    plt.legend()
+    plt.title("Dice Loss During Training and Validation")
+    plt.show()
+
+    # Plot Consistency Loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(len(train_cons_losses)), train_cons_losses, label="Consistency Loss", color='green')
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.title("Consistency Loss During Training")
+    plt.show()
+
+    # Plot Learning Rate
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(len(train_lrs)), train_lrs, label="Learning Rate", color='orange')
+    plt.xlabel("Iterations")
+    plt.ylabel("LR")
+    plt.legend()
+    plt.title("Learning Rate Schedule")
+    plt.show()
+
 
 class DataModuleFromConfig(torch.nn.Module):
     def __init__(self, batch_size, train=None, validation=None, test=None,
@@ -363,28 +416,51 @@ if __name__ == "__main__":
         if scheduler is not None:
             scheduler.step()
 
-        # Save Bset model on val
-        if (cur_epoch+1)%100==0:
-            cur_dice = evaluate(model, val_loader, torch.device('cuda'))
-            if np.mean(cur_dice)>best_dice:
-                best_dice=np.mean(cur_dice)
+        # Early Stopping Parameters
+        patience = 5  # Stop training if no improvement for `patience` validations
+        patience_counter = 0
+        best_dice = 0
+        # Save Best Model on Validation (Every 100 Epochs)
+        if (cur_epoch + 1) % 1 == 0:
+            cur_dice = evaluate(model, val_loader, torch.device('cuda'))  # Compute validation score
+            mean_dice = np.mean(cur_dice)
+
+            if mean_dice > best_dice:
+                best_dice = mean_dice
+                patience_counter = 0  # Reset patience
+                
+                # Remove old validation checkpoints
                 for f in os.listdir(ckptdir):
                     if 'val' in f:
-                        os.remove(os.path.join(ckptdir,f))
-                torch.save({'model': model.state_dict()}, os.path.join(ckptdir,f'val_best_epoch_{cur_epoch}.pth'))
+                        os.remove(os.path.join(ckptdir, f))
+                        
+                # Save new best model
+                torch.save({'model': model.state_dict()}, os.path.join(ckptdir, f'val_best_epoch_{cur_epoch}.pth'))
+            
+            else:
+                patience_counter += 1  # No improvement, increment patience counter
+            
+            val_dice_losses.append(mean_dice)
+            val_epochs.append(cur_epoch)
+            # Print validation results
+            str_out = f'Epoch [{cur_epoch}]   '
+            for i, d in enumerate(cur_dice):
+                str_out += f'Class {i}: {d}, '
+            str_out += f'Validation DICE {mean_dice}/{best_dice}'
+            print(str_out)
+            
+            # Early Stopping Check
+            if patience_counter >= patience:
+                print(f"Early stopping triggered after {cur_epoch+1} epochs!")
+                break  # Stop training
 
-            str=f'Epoch [{cur_epoch}]   '
-            for i,d in enumerate(cur_dice):
-                str+=f'Class {i}: {d}, '
-            str+=f'Validation DICE {np.mean(cur_dice)}/{best_dice}'
-            print(str)
+        # Save Latest Model Every 50 Epochs
+        if (cur_epoch + 1) % 50 == 0:
+            torch.save({'model': model.state_dict()}, os.path.join(ckptdir, 'latest.pth'))
 
-        # Save latest model
-        if (cur_epoch+1)%50==0:
-            torch.save({'model': model.state_dict()}, os.path.join(ckptdir,'latest.pth'))
-
-        if cur_iter >= optimizer_config.max_iter and optimizer_config.max_iter>0:
+        # Stop Training if Max Iterations Reached
+        if cur_iter >= optimizer_config.max_iter and optimizer_config.max_iter > 0:
             torch.save({'model': model.state_dict()}, os.path.join(ckptdir, 'latest.pth'))
             print(f'End training with iteration {cur_iter}')
+            plot_training_curves(train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs)
             break
-

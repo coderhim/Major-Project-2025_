@@ -13,6 +13,7 @@ from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
 print = functools.partial(print, flush=True)
 
+from main import train_dice_losses, train_cons_losses, train_lrs 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -375,6 +376,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1,config=None,visdir=None):
+    
+    global train_lrs, train_cons_losses, train_dice_losses
+
     model.train()
     criterion.train()
     aux_criterion = SemanticConsistencyLoss()
@@ -434,7 +438,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 logits_aug = model(augmented)
                 feats_aug = model.encoder(augmented)
                 # Same change here
-                dice_loss_value = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
+                dice_loss_value = (dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)) / 2
                 cons_loss = aux_criterion(feats_orig, feats_aug)
                 total_loss = dice_loss_value + cons_loss
 
@@ -442,6 +446,10 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_scaler.scale(total_loss).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
+
+        train_dice_losses.append(dice_loss_value.item())
+        train_cons_losses.append(cons_loss.item())
+        train_lrs.append(optimizer.param_groups[0]["lr"])
 
         # Update metrics - change variable name here too
         metric_logger.update(dice_loss=dice_loss_value.item(), cons_loss=cons_loss.item())
