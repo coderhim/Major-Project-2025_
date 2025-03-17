@@ -458,5 +458,6 @@ if __name__ == "__main__":
         if cur_iter >= optimizer_config.max_iter and optimizer_config.max_iter > 0:
             torch.save({'model': model.state_dict()}, os.path.join(ckptdir, 'latest.pth'))
             print(f'End training with iteration {cur_iter}')
-            plot_training_curves(train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs)
             break
+    
+    plot_training_curves(train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs)
