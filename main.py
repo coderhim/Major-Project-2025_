@@ -417,7 +417,7 @@ if __name__ == "__main__":
         patience_counter = 0
         best_dice = 0
         # Save Best Model on Validation (Every 100 Epochs)
-        if (cur_epoch + 1) % 1 == 0:
+        if (cur_epoch + 1) % 100 == 0:
             cur_dice = evaluate(model, val_loader, torch.device('cuda'))  # Compute validation score
             mean_dice = np.mean(cur_dice)
 
