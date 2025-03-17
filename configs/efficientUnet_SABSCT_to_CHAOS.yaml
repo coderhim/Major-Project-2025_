@@ -23,7 +23,7 @@ saliency_balancing_fusion:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 32
+    batch_size: 16
     num_workers: 8
     train:
       target: dataloaders.AbdominalDataset.get_training
