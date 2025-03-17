@@ -416,12 +416,12 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             feats_aug = feats_aug_list[-1]
 
             # Note the change here - using the global dice_loss function but storing result in dice_loss_value
-            print("model Output Shape : ", logits_orig.shape)
-            print("model Output augmented Shape : ", logits_aug.shape)
-            print("label Shape : ", lbl.shape)
-            print("features Shape : ", feats_orig.shape)
-            print("features augmented Shape : ", feats_aug.shape)
-            dice_loss_value = dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)
+            # print("model Output Shape : ", logits_orig.shape)
+            # print("model Output augmented Shape : ", logits_aug.shape)
+            # print("label Shape : ", lbl.shape)
+            # print("features Shape : ", feats_orig.shape)
+            # print("features augmented Shape : ", feats_aug.shape)
+            dice_loss_value = (dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl) ) /2
             cons_loss = aux_criterion(feats_orig, feats_aug)
             total_loss = dice_loss_value + cons_loss
 
