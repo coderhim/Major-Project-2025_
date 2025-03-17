@@ -8,12 +8,8 @@ from losses import SetCriterion
 import numpy as np
 import random
 from torch.optim import lr_scheduler
+from globals import train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs
 
-train_dice_losses = []
-train_cons_losses = []
-train_lrs = []
-val_dice_losses = []
-val_epochs = []  # To track when validation happens
 
 def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)

@@ -11,9 +11,9 @@ from monai.metrics import compute_meandice
 from monai.losses import DiceLoss
 from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
+from globals import train_dice_losses, train_cons_losses, train_lrs
 print = functools.partial(print, flush=True)
 
-from main import train_dice_losses, train_cons_losses, train_lrs 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
