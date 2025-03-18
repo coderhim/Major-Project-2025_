@@ -417,7 +417,7 @@ if __name__ == "__main__":
         patience_counter = 0
         best_dice = 0
         # Save Best Model on Validation (Every 100 Epochs)
-        if (cur_epoch + 1) % 100 == 0:
+        if (cur_epoch + 1) % 2 == 0:
             cur_dice = evaluate(model, val_loader, torch.device('cuda'))  # Compute validation score
             mean_dice = np.mean(cur_dice)
 
@@ -450,9 +450,9 @@ if __name__ == "__main__":
                 print(f"Early stopping triggered after {cur_epoch+1} epochs!")
                 break  # Stop training
 
-        # Save Latest Model Every 50 Epochs
-        if (cur_epoch + 1) % 50 == 0:
-            torch.save({'model': model.state_dict()}, os.path.join(ckptdir, 'latest.pth'))
+        # Save Latest Model Every Epochs
+        if (cur_epoch + 1) % 1 == 0:
+            torch.save({'model': model.state_dict()}, os.path.join(ckptdir, f'_epoch_{cur_epoch}_.pth'))
 
         # Stop Training if Max Iterations Reached
         if cur_iter >= optimizer_config.max_iter and optimizer_config.max_iter > 0:
