@@ -8,6 +8,11 @@ from losses import SetCriterion
 import numpy as np
 import random
 from torch.optim import lr_scheduler
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import torch
+import torch.nn.functional as F # Import the necessary module
 from globals import train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs
 
 
@@ -175,134 +180,6 @@ class DataModuleFromConfig(torch.nn.Module):
                           num_workers=self.num_workers)
 
 torch.backends.cudnn.benchmark = True
-
-import torch
-import torch.nn as nn
-import torchvision.models as models
-import torch
-import torch.nn.functional as F # Import the necessary module
-
-# class UNetWithResNet50Encoder(nn.Module):
-#     def __init__(self, num_classes, pretrained=True):
-#         super(UNetWithResNet50Encoder, self).__init__()
-#         # Load pre-trained ResNet50 model
-#         resnet = models.resnet50(pretrained=pretrained)
-        
-#         # Modify the first convolutional layer to accept single-channel input
-#         self.encoder = nn.Sequential()
-#         self.encoder.add_module('conv1', nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False))
-#         self.encoder.add_module('bn1', resnet.bn1)
-#         self.encoder.add_module('relu', resnet.relu)
-#         self.encoder.add_module('maxpool', resnet.maxpool)
-#         self.encoder.add_module('layer1', resnet.layer1)
-#         self.encoder.add_module('layer2', resnet.layer2)
-#         self.encoder.add_module('layer3', resnet.layer3)
-#         self.encoder.add_module('layer4', resnet.layer4)
-        
-#         # Decoder
-#         self.upconv4 = self._upconv(2048, 1024)
-#         self.upconv3 = self._upconv(1024, 512)
-#         self.upconv2 = self._upconv(512, 256)
-#         self.upconv1 = self._upconv(256, 64)
-        
-#         # Add an extra upsampling layer to account for the initial stride=2 and maxpool
-#         self.upconv0 = self._upconv(64, 64)
-#         self.upconv_final = self._upconv(64, 64)  # For final upsampling to match input size
-        
-#         self.final_conv = nn.Conv2d(64, num_classes, kernel_size=1)
-        
-#     def _upconv(self, in_channels, out_channels):
-#         return nn.Sequential(
-#             nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
-#             nn.ReLU(inplace=True)
-#         )
-    
-#     def forward(self, x, return_features=False):
-#         input_size = x.size()  # Store original input size
-        
-#         # Encoder
-#         conv1 = self.encoder.conv1(x)        # Downsampling 1 (stride=2)
-#         bn1 = self.encoder.bn1(conv1)
-#         relu = self.encoder.relu(bn1)
-#         maxpool = self.encoder.maxpool(relu)  # Downsampling 2 (stride=2)
-#         layer1 = self.encoder.layer1(maxpool)
-#         layer2 = self.encoder.layer2(layer1)  # Downsampling 3 (stride=2)
-#         layer3 = self.encoder.layer3(layer2)  # Downsampling 4 (stride=2)
-#         layer4 = self.encoder.layer4(layer3)  # Downsampling 5 (stride=2)
-        
-#         # Decoder with skip connections
-#         up4 = self.upconv4(layer4)  # Upsampling 1
-#         up3 = self.upconv3(up4 + layer3)  # Upsampling 2
-#         up2 = self.upconv2(up3 + layer2)  # Upsampling 3
-#         up1 = self.upconv1(up2 + layer1)  # Upsampling 4
-#         up0 = self.upconv0(up1)  # Upsampling 5 (to account for maxpool)
-        
-#         # Add an extra upsampling to match original input size
-#         up_final = self.upconv_final(up0)  # Upsampling 6 (to match original input size)
-        
-#         # Apply final 1x1 convolution to get output classes
-#         logits = self.final_conv(up_final)
-#         print("logits shape IN the model :", logits.shape)
-#         # Ensure output size matches input size
-#         if logits.size()[2:] != input_size[2:]:
-#             logits = F.interpolate(logits, size=input_size[2:], mode='bilinear', align_corners=True)
-        
-#         if return_features:
-#             return logits, layer4
-#         else:
-#             return logits
-# # class UNetWithResNet50Encoder(nn.Module):
-#     def __init__(self, num_classes, pretrained=True):
-#         super(UNetWithResNet50Encoder, self).__init__()
-#         # Load pre-trained ResNet50 model
-#         resnet = models.resnet50(pretrained=pretrained)
-        
-#         # Modify the first convolutional layer to accept single-channel input
-#         self.encoder = nn.Sequential()
-#         self.encoder.add_module('conv1', nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False))
-#         self.encoder.add_module('bn1', resnet.bn1)
-#         self.encoder.add_module('relu', resnet.relu)
-#         self.encoder.add_module('maxpool', resnet.maxpool)
-#         self.encoder.add_module('layer1', resnet.layer1)
-#         self.encoder.add_module('layer2', resnet.layer2)
-#         self.encoder.add_module('layer3', resnet.layer3)
-#         self.encoder.add_module('layer4', resnet.layer4)
-        
-#         # Decoder
-#         self.upconv4 = self._upconv(2048, 1024)
-#         self.upconv3 = self._upconv(1024, 512)
-#         self.upconv2 = self._upconv(512, 256)
-#         self.upconv1 = self._upconv(256, 64)
-#         self.final_conv = nn.Conv2d(64, num_classes, kernel_size=1)
-        
-#     def _upconv(self, in_channels, out_channels):
-#         return nn.Sequential(
-#             nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
-#             nn.ReLU(inplace=True)
-#         )
-    
-#     def forward(self, x, return_features=False):
-#         # Encoder
-#         conv1 = self.encoder.conv1(x)
-#         bn1 = self.encoder.bn1(conv1)
-#         relu = self.encoder.relu(bn1)
-#         maxpool = self.encoder.maxpool(relu)
-#         layer1 = self.encoder.layer1(maxpool)
-#         layer2 = self.encoder.layer2(layer1)
-#         layer3 = self.encoder.layer3(layer2)
-#         layer4 = self.encoder.layer4(layer3)
-        
-#         # Decoder
-#         up4 = self.upconv4(layer4)
-#         up3 = self.upconv3(up4 + layer3)
-#         up2 = self.upconv2(up3 + layer2)
-#         up1 = self.upconv1(up2 + layer1)
-#         logits = self.final_conv(up1 + relu)
-        
-#         if return_features:
-#             return logits, layer4
-#         else:
-#             return logits
 
 if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
