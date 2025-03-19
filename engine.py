@@ -398,7 +398,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         img = samples['images']
         lbl = samples['labels']
-        grad_scaler = None
+        grad_scaler = 1
         
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
@@ -430,22 +430,40 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             optimizer.step()
         else:
             # Mixed precision (AMP)
-            with torch.cuda.amp.autocast():
-                # logits_orig, feats_orig = model(img, return_features=True)
-                # logits_aug, feats_aug = model(augmented, return_features=True)
+            # Ensure GradScaler is initialized before training starts
+            # if "grad_scaler" not in globals():
+            grad_scaler = torch.amp.GradScaler()
+
+            # Mixed precision (AMP) training
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
                 logits_orig = model(img)
-                feats_orig = model.encoder(img)
+                feats_orig_list = model.encoder(img)
                 logits_aug = model(augmented)
-                feats_aug = model.encoder(augmented)
-                # Same change here
+                feats_aug_list = model.encoder(augmented)
+
+                # Compute losses
                 dice_loss_value = (dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)) / 2
-                cons_loss = aux_criterion(feats_orig, feats_aug)
+                cons_loss = aux_criterion(feats_orig_list, feats_aug_list)
                 total_loss = dice_loss_value + cons_loss
 
+            # Zero gradients
             optimizer.zero_grad()
+
+            # Scale the loss and backpropagate
             grad_scaler.scale(total_loss).backward()
+
+            # Unscale gradients before optimizer step (important for stability)
+            grad_scaler.unscale_(optimizer)
+
+            # Optional: Clip gradients to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            # Step optimizer using scaled gradients
             grad_scaler.step(optimizer)
+
+            # Update the GradScaler for the next iteration
             grad_scaler.update()
+
 
         train_dice_losses.append(dice_loss_value.item())
         train_cons_losses.append(cons_loss.item())
