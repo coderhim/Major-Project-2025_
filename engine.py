@@ -478,9 +478,9 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             visual_dict = {}
             visual_dict['Original'] = img.detach().cpu().numpy()[0, 0]
             visual_dict['Augmented'] = augmented.detach().cpu().numpy()[0, 0]
-            visual_dict['GT'] = lbl.detach().cpu().numpy()[0]
+            visual_dict['GT'] = torch.argmax(lbl,1).cpu().numpy()[0]
         
-        if visdir is not None and cur_iteration % visual_freq == 0:
+        # if visdir is not None and cur_iteration % visual_freq == 0:
             visual_dict['Logits_Original'] = torch.argmax(logits_orig,1).cpu().numpy()[0]
             visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
             
@@ -491,7 +491,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 plt.subplot(fs, fs, idx + 1)
                 plt.title(k, fontsize=12, fontweight='bold')
                 plt.axis('off')
-                if k not in ['GT']:
+                if k not in ['GT', 'Logits_Original', 'Logits_Augmented']:
                     plt.imshow(visual_dict[k], cmap='gray')
                 else:
                     plt.imshow(visual_dict[k], vmin=0, vmax=4)
