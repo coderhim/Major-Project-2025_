@@ -8,6 +8,7 @@ import functools
 from tqdm import tqdm
 import torch.nn.functional as F
 from monai.metrics import compute_meandice
+from kornia.geometry.transform import thin_plate_spline as tps
 from monai.losses import DiceLoss
 from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
@@ -200,6 +201,36 @@ class HybridAugmentor(nn.Module):
         
         return transformed
     
+    def thin_plate_spline_transform(self, x, masks, control_points=9):
+        B, C, H, W = x.shape
+        device = x.device
+        
+        # Generate control points in grid pattern
+        n_per_side = int(np.sqrt(control_points))
+        points_src = torch.zeros(B, n_per_side**2, 2, device=device)
+        points_idx = 0
+        for i in range(n_per_side):
+            for j in range(n_per_side):
+                points_src[:, points_idx, 0] = 2 * i / (n_per_side - 1) - 1  # Range [-1, 1]
+                points_src[:, points_idx, 1] = 2 * j / (n_per_side - 1) - 1
+                points_idx += 1
+        
+        # Generate random displacements for control points
+        # Smaller displacement for medical images (0.1-0.2 range is common)
+        displacements = torch.randn(B, n_per_side**2, 2, device=device) * 0.15
+        points_dst = points_src + displacements
+        
+        # Use kornia's TPS implementation (much faster)
+        
+        grid = tps(points_src, points_dst, (H, W))
+        
+        # Apply the transformation
+        transformed = F.grid_sample(
+            x, grid, mode='bilinear', padding_mode='border', align_corners=True
+        )
+        
+        return transformed
+
     def to(self, device):
         self.controller = self.controller.to(device)
         return self
@@ -215,8 +246,10 @@ class HybridAugmentor(nn.Module):
             mixed_x, lam = self.class_aware_mixup(x, masks)
             
             # Phase 2: Location-scale transformation
-            global_aug = self.bezier_transform(mixed_x, masks)
-            local_aug = self.bezier_transform(x, masks)
+            global_aug = self.thin_plate_spline_transform(mixed_x, masks)
+            local_aug = self.thin_plate_spline_transform(x, masks)
+            # global_aug = self.bezier_transform(mixed_x, masks)
+            # local_aug = self.bezier_transform(x, masks)
             
             ## Ensure 'global_aug' retains gradients
             global_aug.requires_grad_(True)
@@ -408,13 +441,16 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # Regular precision
             # logits_orig, feats_orig = model(img, return_features=True)
             # logits_aug, feats_aug = model(augmented, return_features=True)
-            logits_orig = model(img)
-            feats_orig_list = model.encoder(img)
+            # logits_orig = model(img)
+            # feats_orig_list = model.encoder(img)
             # feats_orig = feats_orig_list[-1] #last feature map
-            logits_aug = model(augmented)
-            feats_aug_list = model.encoder(augmented)
+            # logits_aug = model(augmented)
+            # feats_aug_list = model.encoder(augmented)
             # feats_aug = feats_aug_list[-1]
-
+            # Single forward pass for original image
+            logits_orig, feats_orig_list = model(img, return_features=True)
+            # Single forward pass for augmented image
+            logits_aug, feats_aug_list = model(augmented, return_features=True)
             # Note the change here - using the global dice_loss function but storing result in dice_loss_value
             # print("model Output Shape : ", logits_orig.shape)
             # print("model Output augmented Shape : ", logits_aug.shape)
@@ -436,10 +472,10 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
             # Mixed precision (AMP) training
             with torch.autocast(device_type="cuda", dtype=torch.float16):
-                logits_orig = model(img)
-                feats_orig_list = model.encoder(img)
-                logits_aug = model(augmented)
-                feats_aug_list = model.encoder(augmented)
+                # Single forward pass for original image
+                logits_orig, feats_orig_list = model(img, return_features=True)
+                # Single forward pass for augmented image
+                logits_aug, feats_aug_list = model(augmented, return_features=True)
 
                 # Compute losses
                 dice_loss_value = (dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl)) / 2

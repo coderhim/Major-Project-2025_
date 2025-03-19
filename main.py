@@ -14,7 +14,7 @@ import torchvision.models as models
 import torch
 import torch.nn.functional as F # Import the necessary module
 from globals import train_dice_losses, train_cons_losses, train_lrs, val_dice_losses, val_epochs
-
+import types
 
 def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
@@ -220,6 +220,22 @@ if __name__ == "__main__":
     # model = UNetWithResNet50Encoder(num_classes=5, pretrained=True)
     if torch.cuda.is_available():
         model=model.cuda()
+
+    # Store original forward method
+    original_forward = model.forward
+
+    # Define new forward method to return both outputs and feature maps
+    def new_forward(self, x, return_features=True):
+        features = self.encoder(x)  # Extract features from encoder
+        decoder_output = self.decoder(*features)  # Decode features
+        masks = self.segmentation_head(decoder_output)  # Get segmentation mask
+        
+        if return_features:
+            return masks, features
+        return masks
+
+    # Patch the model with the new forward method
+    model.forward = types.MethodType(new_forward, model)
 
     if getattr(model_config.params, 'base_learning_rate') :
         bs, base_lr = config.data.params.batch_size, optimizer_config.base_learning_rate
