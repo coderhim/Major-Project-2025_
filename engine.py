@@ -279,8 +279,8 @@ class HybridAugmentor(nn.Module):
         # Use the correct function from kornia
         # from kornia.geometry.transform import thin_plate_spline
         # grid = thin_plate_spline.thin_plate_spline(points_src, points_dst, (H, W))
-        kernel_weights, affine_weights = get_tps_transform(points_dst, points_src)
-        warped_image = warp_image_tps(x, points_src, kernel_weights, affine_weights)
+        kernel_weights, affine_weights = get_tps_transform(points_src, points_dst)
+        warped_image = warp_image_tps(x, points_src, kernel_weights, affine_weights, align_corners = True)
         # Apply the transformation with gradient tracking
         # transformed = F.grid_sample(
         #     x, grid, mode='bilinear', padding_mode='border', align_corners=True
