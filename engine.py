@@ -221,7 +221,7 @@ class HybridAugmentor(nn.Module):
         points_dst = points_src + displacements
         
         # Use kornia's TPS implementation (much faster)
-        
+        from kornia.geometry.transform import thin_plate_spline as tps
         grid = tps(points_src, points_dst, (H, W))
         
         # Apply the transformation
