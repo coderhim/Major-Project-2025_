@@ -225,7 +225,7 @@ if __name__ == "__main__":
     original_forward = model.forward
 
     # Define new forward method to return both outputs and feature maps
-    def new_forward(self, x, return_features=True):
+    def new_forward(self, x, return_features=False):
         features = self.encoder(x)  # Extract features from encoder
         decoder_output = self.decoder(*features)  # Decode features
         masks = self.segmentation_head(decoder_output)  # Get segmentation mask
