@@ -388,7 +388,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
     header = f'Epoch: [{epoch}]'
-    print_freq = 0
+    print_freq = 10
     visual_freq = 100  # Added visual frequency
     for i, samples in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # Move samples to the appropriate device
