@@ -388,8 +388,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
     header = f'Epoch: [{epoch}]'
-    print_freq = 10
-
+    print_freq = 0
+    visual_freq = 100  # Added visual frequency
     for i, samples in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # Move samples to the appropriate device
         for k, v in samples.items():
@@ -472,6 +472,32 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         # Update metrics - change variable name here too
         metric_logger.update(dice_loss=dice_loss_value.item(), cons_loss=cons_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        visual_dict = None
+        if cur_iteration % visual_freq == 0:
+            visual_dict = {}
+            visual_dict['Original'] = img.detach().cpu().numpy()[0, 0]
+            visual_dict['Augmented'] = augmented.detach().cpu().numpy()[0, 0]
+            visual_dict['GT'] = lbl.detach().cpu().numpy()[0]
+        
+        if visdir is not None and cur_iteration % visual_freq == 0:
+            visual_dict['Logits_Original'] = logits_orig.detach().cpu().numpy()[0, 0]
+            visual_dict['Logits_Augmented'] = logits_aug.detach().cpu().numpy()[0, 0]
+            
+            fs = int(len(visual_dict) ** 0.5) + 1
+            plt.figure(figsize=(fs * 4, fs * 4))
+            for idx, k in enumerate(visual_dict.keys()):
+                plt.subplot(fs, fs, idx + 1)
+                plt.title(k, fontsize=12, fontweight='bold')
+                plt.axis('off')
+                if k not in ['GT']:
+                    plt.imshow(visual_dict[k], cmap='gray')
+                else:
+                    plt.imshow(visual_dict[k], vmin=0, vmax=4)
+                plt.colorbar()
+            plt.tight_layout()
+            plt.savefig(f'{visdir}/{cur_iteration}.png', dpi=300, bbox_inches='tight')
+            plt.close()
 
         cur_iteration += 1
         if cur_iteration >= max_iteration and max_iteration > 0:
