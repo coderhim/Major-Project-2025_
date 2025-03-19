@@ -481,8 +481,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             visual_dict['GT'] = lbl.detach().cpu().numpy()[0]
         
         if visdir is not None and cur_iteration % visual_freq == 0:
-            visual_dict['Logits_Original'] = logits_orig.detach().cpu().numpy()[0, 0]
-            visual_dict['Logits_Augmented'] = logits_aug.detach().cpu().numpy()[0, 0]
+            visual_dict['Logits_Original'] = torch.argmax(logits_orig,1).cpu().numpy()[0]
+            visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
             
             fs = int(len(visual_dict) ** 0.5) + 1
             plt.figure(figsize=(fs * 4, fs * 4))
