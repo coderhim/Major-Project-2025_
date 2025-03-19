@@ -8,7 +8,7 @@ import functools
 from tqdm import tqdm
 import torch.nn.functional as F
 from monai.metrics import compute_meandice
-from kornia.geometry.transform import thin_plate_spline as tps
+from kornia.geometry.transform import get_tps_transform, warp_image_tps
 from monai.losses import DiceLoss
 from torch.autograd import Variable
 from dataloaders.saliency_balancing_fusion import get_SBF_map
@@ -277,15 +277,16 @@ class HybridAugmentor(nn.Module):
         points_dst = points_src + smoothed_displacements
         
         # Use the correct function from kornia
-        from kornia.geometry.transform import thin_plate_spline
-        grid = thin_plate_spline.thin_plate_spline(points_src, points_dst, (H, W))
-        
+        # from kornia.geometry.transform import thin_plate_spline
+        # grid = thin_plate_spline.thin_plate_spline(points_src, points_dst, (H, W))
+        kernel_weights, affine_weights = get_tps_transform(points_dst, points_src)
+        warped_image = warp_image_tps(x, points_src, kernel_weights, affine_weights)
         # Apply the transformation with gradient tracking
-        transformed = F.grid_sample(
-            x, grid, mode='bilinear', padding_mode='border', align_corners=True
-        )
+        # transformed = F.grid_sample(
+        #     x, grid, mode='bilinear', padding_mode='border', align_corners=True
+        # )
         
-        return transformed
+        return warped_image
 
     def to(self, device):
         self.controller = self.controller.to(device)
