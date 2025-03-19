@@ -303,10 +303,10 @@ class HybridAugmentor(nn.Module):
             mixed_x, lam = self.class_aware_mixup(x, masks)
             
             # Phase 2: Location-scale transformation
-            global_aug = self.thin_plate_spline_transform(mixed_x, masks)
-            local_aug = self.thin_plate_spline_transform(x, masks)
-            # global_aug = self.bezier_transform(mixed_x, masks)
-            # local_aug = self.bezier_transform(x, masks)
+            # global_aug = self.thin_plate_spline_transform(mixed_x, masks)
+            # local_aug = self.thin_plate_spline_transform(x, masks)
+            global_aug = self.bezier_transform(mixed_x, masks)
+            local_aug = self.bezier_transform(x, masks)
             
             ## Ensure 'global_aug' retains gradients
             global_aug.requires_grad_(True)
