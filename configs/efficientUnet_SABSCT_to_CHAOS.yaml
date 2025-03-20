@@ -2,7 +2,7 @@ model:
   target: segmentation_models_pytorch.Unet
   params:
     encoder_name: efficientnet-b2
-    encoder_weights: imagenet
+    encoder_weights: null
     in_channels: 1
     classes: 5
     activation: null

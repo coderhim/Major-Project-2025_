@@ -488,7 +488,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         img = samples['images']
         lbl = samples['labels']
-        grad_scaler = 1
+        grad_scaler = None
         
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
