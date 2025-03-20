@@ -247,6 +247,9 @@ if __name__ == "__main__":
         param_dicts = model.optim_parameters()
     else:
         param_dicts = [{"params": [p for n, p in model.named_parameters() if p.requires_grad], "lr_scale": 1}]
+    # Ensure all layers are trainable (Fine-tuning entire model)
+    for param in model.parameters():
+        param.requires_grad = True
 
     opt_params = {'lr': lr}
     for k in ['momentum', 'weight_decay']:
