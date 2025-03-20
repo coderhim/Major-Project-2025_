@@ -580,7 +580,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             fs = int(len(visual_dict) ** 0.5) + 1
             plt.figure(figsize=(fs * 4, fs * 4))
             for idx, k in enumerate(visual_dict.keys()):
-                print(k)
+                # print(k)
                 plt.subplot(fs, fs, idx + 1)
                 plt.title(k, fontsize=12, fontweight='bold')
                 plt.axis('off')
