@@ -347,7 +347,7 @@ if __name__ == "__main__":
                 break  # Stop training
 
         # Save Latest Model Every Epochs
-        if (cur_epoch + 1) % 1 == 0:
+        if (cur_epoch + 1) % 5 == 0:
             torch.save({'model': model.state_dict()}, os.path.join(ckptdir, f'_epoch_{cur_epoch}_.pth'))
 
         # Stop Training if Max Iterations Reached
