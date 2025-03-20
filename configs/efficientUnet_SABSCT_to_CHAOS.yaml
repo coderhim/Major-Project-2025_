@@ -11,7 +11,7 @@ optimizer:
   target: torch.optim.AdamW
   learning_rate: 3e-4
   weight_decay: 3e-5
-  max_epoch: 5
+  max_epoch: 30
   max_iter: -1
   warmup_iter: -1
   lr_scheduler: lambda
@@ -23,7 +23,7 @@ saliency_balancing_fusion:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 60
+    batch_size: 80
     num_workers: 8
     train:
       target: dataloaders.AbdominalDataset.get_training
