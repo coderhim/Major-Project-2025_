@@ -591,8 +591,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(dice_loss=dice_loss_value.item(), cons_loss=cons_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-        visual_dict = None
-        if cur_iteration % visual_freq == 0:
+        # visual_dict = None
+        if visdir is not None and cur_iteration % visual_freq==0:
         # if visdir is not None and cur_iteration % visual_freq == 0:
             visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
             
