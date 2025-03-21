@@ -309,28 +309,27 @@ class HybridAugmentor(nn.Module):
             # local_aug = self.bezier_transform(x, masks)
             
             ## Ensure 'global_aug' retains gradients
-            global_aug.requires_grad_(True)
+            # global_aug.requires_grad_(True)
 
             # Controller-adjusted parameters (keep in computational graph)
-            control_params = self.controller(torch.stack([
-                torch.tensor(lam, device=device),  # Convert lam to a tensor
-                torch.tensor(epoch / total_epochs, device=device),
-                global_aug.mean(),
-                local_aug.std()
-            ]))
+            # control_params = self.controller(torch.stack([
+            #     torch.tensor(lam, device=device),  # Convert lam to a tensor
+            #     torch.tensor(epoch / total_epochs, device=device),
+            #     global_aug.mean(),
+            #     local_aug.std()
+            # ]))
 
-
-            alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
+            # alpha_ctrl, beta_ctrl, gamma_ctrl = torch.sigmoid(control_params)
 
             # Compute saliency map without detaching the graph
-            grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True, retain_graph=True)[0]
+            # grad_global = torch.autograd.grad(global_aug.sum(), global_aug, create_graph=True, retain_graph=True)[0]
 
             # Apply adaptive saliency threshold
-            saliency = (grad_global.abs().mean(1, keepdim=True) > self.adaptive_threshold(epoch, total_epochs)).float()
+            # saliency = (grad_global.abs().mean(1, keepdim=True) > self.adaptive_threshold(epoch, total_epochs)).float()
 
             # Fused output
-            fused = saliency * global_aug + (1 - saliency) * local_aug
-            return fused
+            # fused = saliency * global_aug + (1 - saliency) * local_aug
+            return global_aug, local_aug
 
 class SemanticConsistencyLoss(nn.Module):
     def __init__(self, feat_layers=[1,3,5], weight=0.3):
@@ -465,7 +464,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, cur_iteration:int, max_iteration: int = -1,config=None,visdir=None):
+                    device: torch.device, epoch: int, cur_iteration:int, max_epoch: int, max_iteration: int = -1,config=None,visdir=None):
     
     global train_lrs, train_cons_losses, train_dice_losses
 
@@ -489,10 +488,17 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         img = samples['images']
         lbl = samples['labels']
         grad_scaler = None
-        
+        if cur_iteration % visual_freq == 0:
+            visual_dict={}
+            visual_dict['Input Image']=img.detach().cpu().numpy()[0,0]
+            # visual_dict['LLA']=LLA_img.detach().cpu().numpy()[0,0]
+            visual_dict['GT']=lbl.detach().cpu().numpy()[0]
+        else:
+            visual_dict=None
+        input_var = Variable(img, requires_grad=True)
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
-        augmented = aug_module(img, lbl, cur_iteration, max_iteration)
+        global_aug, local_aug = aug_module(img, lbl, cur_iteration, max_iteration)
 
         if grad_scaler is None:
             # Regular precision
@@ -505,8 +511,27 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # feats_aug_list = model.encoder(augmented)
             # feats_aug = feats_aug_list[-1]
             # Single forward pass for original image
-            logits_orig, feats_orig_list = model(img, return_features=True)
+            optimizer.zero_grad()
+            logits_orig, feats_orig_list = model(input_var, return_features=True)
+            losses=dice_loss(logits_orig, lbl)
+            # logits = model(input_var)
+            # loss_dict = criterion.get_loss(logits_orig, lbl)
+            # losses = sum(loss_dict[k] * criterion.weight_dict[k] for k in loss_dict.keys() if k in criterion.weight_dict)
+            losses.backward(retain_graph=True)
+
+            # saliency
+            gradient = torch.sqrt(torch.mean(input_var.grad ** 2, dim=1, keepdim=True)).detach()
+            saliency=get_SBF_map(gradient,config.grid_size)
+            if visual_dict is not None:
+                visual_dict['Input_Img_saliency']= saliency.detach().cpu().numpy()[0,0]
+                visual_dict['Input_Img_pred']=torch.argmax(logits_orig,1).cpu().numpy()[0]
             # Single forward pass for augmented image
+            threshold_value = aug_module.adaptive_threshold(epoch, max_epoch)
+            saliency = (saliency > threshold_value).float()
+            mixed_img = global_aug * saliency + local_aug * (1 - saliency)
+            if visual_dict is not None:
+                visual_dict['Augmented']= mixed_img.detach().cpu().numpy()[0,0]
+            augmented = Variable(mixed_img, requires_grad=True)
             logits_aug, feats_aug_list = model(augmented, return_features=True)
             # Note the change here - using the global dice_loss function but storing result in dice_loss_value
             # print("model Output Shape : ", logits_orig.shape)
@@ -514,11 +539,11 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # print("label Shape : ", lbl.shape)
             # print("features Shape : ", feats_orig.shape)
             # print("features augmented Shape : ", feats_aug.shape)
-            dice_loss_value = (dice_loss(logits_orig, lbl) + dice_loss(logits_aug, lbl) ) /2
+            dice_loss_value = dice_loss(logits_aug, lbl) 
             cons_loss = aux_criterion(feats_orig_list, feats_aug_list)
             total_loss = dice_loss_value + cons_loss
 
-            optimizer.zero_grad()
+            
             total_loss.backward()
             optimizer.step()
         else:
@@ -568,13 +593,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
 
         visual_dict = None
         if cur_iteration % visual_freq == 0:
-            visual_dict = {}
-            visual_dict['Original'] = img.detach().cpu().numpy()[0, 0]
-            visual_dict['Augmented'] = augmented.detach().cpu().numpy()[0, 0]
-            visual_dict['GT'] = torch.argmax(lbl,1).cpu().numpy()[0]
-        
         # if visdir is not None and cur_iteration % visual_freq == 0:
-            visual_dict['Logits_Original'] = torch.argmax(logits_orig,1).cpu().numpy()[0]
             visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
             
             fs = int(len(visual_dict) ** 0.5) + 1
@@ -584,7 +603,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 plt.subplot(fs, fs, idx + 1)
                 plt.title(k, fontsize=12, fontweight='bold')
                 plt.axis('off')
-                if k not in ['GT', 'Logits_Original', 'Logits_Augmented']:
+                if k not in ['GT', 'Input_Img_pred', 'Logits_Augmented']:
                     plt.imshow(visual_dict[k], cmap='gray')
                 else:
                     plt.imshow(visual_dict[k], vmin=0, vmax=4)
