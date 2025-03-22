@@ -78,7 +78,7 @@ class AbdominalDataset(torch_data.Dataset):
         self.idx_pct = idx_pct
         self.total_epochs = total_epochs
         self.current_epoch = 0  # Will be updated during training
-
+        self.location_scale=location_scale
         self.img_pids = {}
         for _domain in self.domains: # load file names
             self.img_pids[_domain] = sorted([ fid.split("_")[-1].split(".nii.gz")[0] for fid in glob.glob(self._base_dir + "/" +  _domain  + "/processed/image_*.nii.gz") ], key = lambda x: int(x))
