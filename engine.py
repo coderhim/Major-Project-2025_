@@ -187,7 +187,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         # Generate augmented sample
         # lbl = F.one_hot(lbl,5).permute((0,3,1,2))
         # global_aug, local_aug = aug_module(img, lbl, cur_iteration, max_iteration)
-
+        grad_scaler = None
         if grad_scaler is None:
             optimizer.zero_grad()
             logits_orig, feats_orig_list = model(input_var, return_features=True)
