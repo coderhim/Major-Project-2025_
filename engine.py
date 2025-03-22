@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 import util.misc as utils
 import functools
 from tqdm import tqdm
