@@ -107,8 +107,8 @@ class AbdominalDataset(torch_data.Dataset):
             print(f'Applying Hybrid Augmentation on {mode} split')
             # self.location_scale = LocationScaleAugmentation(vrange=(0.,1.), background_threshold=0.01)
             self.hybrid_augmentor = HybridAugmentor(num_classes=self.nclass)
-            if torch.cuda.is_available():
-                self.hybrid_augmentor = self.hybrid_augmentor.to('cuda')
+            # if torch.cuda.is_available():
+            #     self.hybrid_augmentor = self.hybrid_augmentor.to('cuda')
         else:
             self.location_scale = None
 
@@ -252,7 +252,8 @@ class AbdominalDataset(torch_data.Dataset):
                     masks[0, c] = (lb_int[:, :, 0] == c).astype(np.float32)
                 masks_tensor = torch.from_numpy(masks).float()
                 # Move to appropriate device if using GPU
-                device = next(self.hybrid_augmentor.parameters()).device
+                # device = next(self.hybrid_augmentor.parameters()).device
+                device = torch.device("cpu")
                 img_tensor = img_tensor.to(device)
                 masks_tensor = masks_tensor.to(device)
 
