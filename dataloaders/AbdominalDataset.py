@@ -9,7 +9,7 @@ import platform
 import torch.utils.data as torch_data
 import math
 import itertools
-from .location_scale_augmentation import LocationScaleAugmentation
+from .location_scale_augmentation import LocationScaleAugmentation, HybridAugmentor
 hostname = platform.node()
 # folder for datasets
 BASEDIR = './data/abdominal/'
@@ -57,13 +57,14 @@ def get_normalize_op(fids, domain=False):
         return mean_std_norm(_mean, _std)
 
 class AbdominalDataset(torch_data.Dataset):
-    def __init__(self,  mode, transforms, base_dir, domains: list,  idx_pct = [0.7, 0.1, 0.2], tile_z_dim = 3, extern_norm_fn = None, location_scale=False):
+    def __init__(self,  mode, transforms, base_dir, domains: list,  idx_pct = [0.7, 0.1, 0.2], tile_z_dim = 3, extern_norm_fn = None, location_scale=False, total_epochs=10):
         """
         Args:
             mode:               'train', 'val', 'test', 'test_all'
             transforms:         naive data augmentations used by default. Photometric transformations slightly better than those configured by Zhang et al. (bigaug)
             idx_pct:            train-val-test split for source domain
             extern_norm_fn:     feeding data normalization functions from external, only concerns CT-MR cross domain scenario
+            total_epochs:       total number of epochs for training (for augmentation curriculum)
         """
         super(AbdominalDataset, self).__init__()
         self.transforms=transforms
@@ -75,6 +76,8 @@ class AbdominalDataset(torch_data.Dataset):
         self.tile_z_dim = tile_z_dim
         self._base_dir = base_dir
         self.idx_pct = idx_pct
+        self.total_epochs = total_epochs
+        self.current_epoch = 0  # Will be updated during training
 
         self.img_pids = {}
         for _domain in self.domains: # load file names
@@ -101,8 +104,11 @@ class AbdominalDataset(torch_data.Dataset):
         self.actual_dataset = self.__read_dataset()
         self.size = len(self.actual_dataset) # 2D
         if location_scale:
-            print(f'Applying Location Scale Augmentation on {mode} split')
-            self.location_scale = LocationScaleAugmentation(vrange=(0.,1.), background_threshold=0.01)
+            print(f'Applying Hybrid Augmentation on {mode} split')
+            # self.location_scale = LocationScaleAugmentation(vrange=(0.,1.), background_threshold=0.01)
+            self.hybrid_augmentor = HybridAugmentor(num_classes=self.nclass)
+            if torch.cuda.is_available():
+                self.hybrid_augmentor = self.hybrid_augmentor.to('cuda')
         else:
             self.location_scale = None
 
@@ -226,7 +232,9 @@ class AbdominalDataset(torch_data.Dataset):
 
         return out_list
 
-
+    def set_epoch(self, epoch):
+        """Set the current epoch for curriculum augmentation"""
+        self.current_epoch = epoch
     def __getitem__(self, index):
         index = index % len(self.actual_dataset)
         curr_dict = self.actual_dataset[index]
@@ -235,20 +243,51 @@ class AbdominalDataset(torch_data.Dataset):
                 img = curr_dict["img"].copy()
                 lb = curr_dict["lb"].copy()
                 img= self.denorm_(img,curr_dict['vol_info'])
+                # Convert to torch tensors for HybridAugmentor
+                img_tensor = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
+                # Create one-hot encoded mask for the augmentor
+                lb_int = lb.astype(np.int32)
+                masks = np.zeros((1, self.nclass, lb_int.shape[0], lb_int.shape[1]), dtype=np.float32)
+                for c in range(self.nclass):
+                    masks[0, c] = (lb_int[:, :, 0] == c).astype(np.float32)
+                masks_tensor = torch.from_numpy(masks).float()
+                # Move to appropriate device if using GPU
+                device = next(self.hybrid_augmentor.parameters()).device
+                img_tensor = img_tensor.to(device)
+                masks_tensor = masks_tensor.to(device)
 
-                GLA = self.location_scale.Global_Location_Scale_Augmentation(img.copy())
-                GLA = self.renorm_( GLA , curr_dict['vol_info'])
-
-                LLA = self.location_scale.Local_Location_Scale_Augmentation(img.copy(), lb.astype(np.int32))
-                LLA = self.renorm_( LLA, curr_dict['vol_info'])
-                comp = np.concatenate([GLA, LLA, curr_dict["lb"]], -1)
+               # Apply hybrid augmentation
+                with torch.no_grad():  # No need to track gradients during augmentation
+                    global_aug, local_aug = self.hybrid_augmentor(
+                        img_tensor.unsqueeze(0),  # Add batch dimension
+                        masks_tensor, 
+                        self.current_epoch, 
+                        self.total_epochs
+                    )
+                    global_aug = global_aug[0]  # Remove batch dimension
+                    local_aug = local_aug[0]    # Remove batch dimension
+                
+                # Convert back to numpy for further processing
+                global_aug_np = global_aug.cpu().numpy()
+                local_aug_np = local_aug.cpu().numpy()
+                
+                # Renormalize the augmented images
+                global_aug_np = np.transpose(global_aug_np, (1, 2, 0))
+                local_aug_np = np.transpose(local_aug_np, (1, 2, 0))
+                global_aug_np = self.renorm_(global_aug_np, curr_dict['vol_info'])
+                local_aug_np = self.renorm_(local_aug_np, curr_dict['vol_info'])
+                
+                # Apply transforms if needed
                 if self.transforms:
-                    timg, lb = self.transforms(comp, c_img=2, c_label=1, nclass=self.nclass, is_train=self.is_train,
-                                              use_onehot=False)
-                    GLA, LLA = np.split(timg, 2, -1)
-                img=GLA
-
-                aug_img=LLA
+                    comp = np.concatenate([global_aug_np, local_aug_np, curr_dict["lb"]], -1)
+                    timg, lb = self.transforms(
+                        comp, c_img=2, c_label=1, nclass=self.nclass, 
+                        is_train=self.is_train, use_onehot=False
+                    )
+                    global_aug_np, local_aug_np = np.split(timg, 2, -1)
+                
+                img = global_aug_np
+                aug_img = local_aug_np
                 aug_img = np.float32(aug_img)
                 aug_img = np.transpose(aug_img, (2, 0, 1))
                 aug_img = torch.from_numpy(aug_img)
@@ -257,11 +296,11 @@ class AbdominalDataset(torch_data.Dataset):
                 if self.transforms:
                     img, lb = self.transforms(comp, c_img=1, c_label=1, nclass=self.nclass, is_train=self.is_train,
                                               use_onehot=False)
-                aug_img = 1
+                aug_img = 1 # Placeholder when not using augmentation
         else:
             img = curr_dict['img']
             lb = curr_dict['lb']
-            aug_img=1
+            aug_img=1 # Placeholder for validation/test
 
         img = np.float32(img)
         lb = np.float32(lb)
@@ -310,7 +349,7 @@ class AbdominalDataset(torch_data.Dataset):
 
 tr_func  = trans.transform_with_label(trans.tr_aug)
 from functools import partial
-def get_training(modality,location_scale, idx_pct = [0.7, 0.1, 0.2], tile_z_dim = 3):
+def get_training(modality,location_scale, idx_pct = [0.7, 0.1, 0.2], tile_z_dim = 3, max_epoch=10):
     return AbdominalDataset(idx_pct = idx_pct,\
         mode = 'train',\
         domains = modality,\
@@ -318,7 +357,8 @@ def get_training(modality,location_scale, idx_pct = [0.7, 0.1, 0.2], tile_z_dim 
         base_dir = BASEDIR,\
         extern_norm_fn = partial(get_normalize_op,domain=True), # normalization function is decided by domain
         tile_z_dim = tile_z_dim,
-        location_scale=location_scale)
+        location_scale=location_scale,
+        total_epochs=max_epoch)
 
 def get_validation(modality, idx_pct = [0.7, 0.1, 0.2], tile_z_dim = 3):
      return AbdominalDataset(idx_pct = idx_pct,\

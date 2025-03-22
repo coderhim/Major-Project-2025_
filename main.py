@@ -141,10 +141,11 @@ def plot_training_curves(train_dice_losses, train_cons_losses, train_lrs, val_di
 
 
 class DataModuleFromConfig(torch.nn.Module):
-    def __init__(self, batch_size, train=None, validation=None, test=None,
+    def __init__(self, batch_size,max_epoch, train=None, validation=None, test=None,
                  num_workers=None):
         super().__init__()
         self.batch_size = batch_size
+        self.max_epoch = max_epoch
         self.dataset_configs = dict()
         self.num_workers = num_workers if num_workers is not None else batch_size*2
         if train is not None:
@@ -187,9 +188,7 @@ if __name__ == "__main__":
     parser = get_parser()
     opt, unknown = parser.parse_known_args()
     seed=seed_everything(opt.seed)
-    if opt.resume:
-        if not os.path.exists(opt.resume):
-            raise ValueError("Cannot find {}".format(opt.resume))
+
     if opt.base:
         cfg_fname = os.path.split(opt.base[0])[-1]
         cfg_name = os.path.splitext(cfg_fname)[0]
@@ -220,7 +219,13 @@ if __name__ == "__main__":
     # model = UNetWithResNet50Encoder(num_classes=5, pretrained=True)
     if torch.cuda.is_available():
         model=model.cuda()
-
+    if opt.resume:
+        if not os.path.exists(opt.resume):
+            raise ValueError("Cannot find {}".format(opt.resume))
+        else:
+            checkpoint = torch.load(opt.resume, map_location="cuda" if torch.cuda.is_available() else "cpu")
+            model.load_state_dict(checkpoint["model_state_dict"])
+            print(f"Loaded checkpoint from {opt.resume}")
     # Store original forward method
     original_forward = model.forward
 
@@ -302,6 +307,8 @@ if __name__ == "__main__":
     label_name=data.datasets["train"].all_label_names
     for cur_epoch in range(max_epoch):
         if SBF_config.usage:
+            # Set the current epoch for curriculum learning
+            data.datasets["train"].set_epoch(cur_epoch)
             cur_iter = train_one_epoch_SBF(model, criterion,train_loader,opt,torch.device('cuda'),cur_epoch, cur_iter, max_epoch, optimizer_config.max_iter, SBF_config, visdir )
         else:
             cur_iter = train_one_epoch(model, criterion, train_loader, opt, torch.device('cuda'), cur_epoch, cur_iter, optimizer_config.max_iter)
