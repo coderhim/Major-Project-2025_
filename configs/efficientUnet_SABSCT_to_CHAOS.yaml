@@ -29,7 +29,7 @@ data:
     train:
       target: dataloaders.AbdominalDataset.get_training
       params:
-        location_scale: false
+        location_scale: true
         modality:
           - SABSCT
         tile_z_dim: 1
