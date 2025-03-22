@@ -236,7 +236,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
         mixed_GLA_img, mixed_lbl = class_aware_mixup_segmentation(GLA_img, lbl, num_classes=5)
-        print("here i am ",mixed_lbl.shape)
+        # print("here i am ",mixed_lbl.shape)
         input_var = Variable(mixed_GLA_img, requires_grad=True)
         if visual_dict is not None:
             visual_dict['GLA']=mixed_GLA_img.detach().cpu().numpy()[0,0]  
