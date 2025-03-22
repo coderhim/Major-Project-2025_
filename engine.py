@@ -254,34 +254,35 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # print("LLA image size ", LLA_img.shape)
 
             # saliency
-            gradient = torch.sqrt(torch.mean(input_var.grad ** 2, dim=1, keepdim=True)).detach()
+            # gradient = torch.sqrt(torch.mean(input_var.grad ** 2, dim=1, keepdim=True)).detach()
 
-            saliency=get_SBF_map(gradient,config.grid_size)
+            # saliency=get_SBF_map(gradient,config.grid_size)
 
             if visual_dict is not None:
                 visual_dict['GLA_pred']=torch.argmax(logits_orig,1).cpu().numpy()[0]
 
             # threshold_value = adaptive_threshold(epoch, max_epoch)
             # saliency = (saliency > threshold_value).float()
-            if visual_dict is not None:
-                visual_dict['GLA_saliency']= saliency.detach().cpu().numpy()[0,0]
-            mixed_img = mixed_GLA_img.detach() * saliency + LLA_img * (1 - saliency)
-            sum_lbl = mixed_lbl + lbl
-            if visual_dict is not None:
-                visual_dict['SBF']= mixed_img.detach().cpu().numpy()[0,0]
+            # if visual_dict is not None:
+                # visual_dict['GLA_saliency']= saliency.detach().cpu().numpy()[0,0]
+            # mixed_img = mixed_GLA_img.detach() * saliency + LLA_img * (1 - saliency)
+            # sum_lbl = mixed_lbl + lbl
+            # if visual_dict is not None:
+                # visual_dict['SBF']= mixed_img.detach().cpu().numpy()[0,0]
 
-            aug_var = Variable(mixed_img, requires_grad=True)
+            aug_var = Variable(LLA_img, requires_grad=True)
             logits_aug, feats_aug_list = model(aug_var, return_features=True)
-            dice_loss_value = dice_loss(logits_aug, sum_lbl)
+            dice_loss_value = dice_loss(logits_aug, lbl)
             cons_loss = aux_criterion(feats_orig_list, feats_aug_list)
             total_loss = dice_loss_value + cons_loss
             total_loss.backward()
             # optimizer.step()
 
+            # if visual_dict is not None:
+                # visual_dict['Sum_label']= torch.argmax(sum_lbl, 1).cpu().numpy()[0]
             if visual_dict is not None:
-                visual_dict['Sum_label']= torch.argmax(sum_lbl, 1).cpu().numpy()[0]
-            if visual_dict is not None:
-                visual_dict['SBF_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
+                # visual_dict['SBF_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
+                visual_dict['LLA_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
 
             optimizer.step()
 
