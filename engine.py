@@ -186,18 +186,18 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         input_var = Variable(GLA_img, requires_grad=True)
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
-        print("#####@here i sthe device ", device)
-        print(input_var.shape)
-        print(lbl.shape)
+        # print("#####@here i sthe device ", device)
+        # print(input_var.shape)
+        # print(lbl.shape)
         # global_aug, local_aug = aug_module(img, lbl, cur_iteration, max_iteration)
         grad_scaler = None
         if grad_scaler is None:
             optimizer.zero_grad()
             logits_orig, feats_orig_list = model(input_var, return_features=True)
-            print(logits_orig.shape)
+            # print(logits_orig.shape)
             losses=dice_loss(logits_orig, lbl)
             losses.backward(retain_graph=True)
-            print("LLA image size ", LLA_img.shape)
+            # print("LLA image size ", LLA_img.shape)
 
             # saliency
             gradient = torch.sqrt(torch.mean(input_var.grad ** 2, dim=1, keepdim=True)).detach()
