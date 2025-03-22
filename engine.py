@@ -279,6 +279,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # optimizer.step()
 
             if visual_dict is not None:
+                visual_dict['Sum_label']= torch.argmax(sum_lbl, 1).cpu().numpy()[0]
+            if visual_dict is not None:
                 visual_dict['SBF_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
 
             optimizer.step()
