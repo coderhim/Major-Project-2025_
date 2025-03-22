@@ -211,9 +211,9 @@ class HybridAugmentor(nn.Module):
         elasticity_map = {
             0: 0.05,  # Background - minimal deformation
             1: 0.12,  # Liver - moderate deformation
-            2: 0.08,  # Spleen - less deformation
-            3: 0.15,  # Kidney - more deformation
-            4: 0.10,  # Default for other organs
+            2: 0.15,  # R-Kidney - more deformation
+            3: 0.15,  # L-Kidney - more deformation
+            4: 0.08,  # Spleen - less deformation
         }
         
         # Get majority organ per control point region to determine deformation magnitude

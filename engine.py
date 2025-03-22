@@ -147,7 +147,55 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
     return cur_iteration
 
+def adaptive_threshold( epoch, total_epochs, tau_max=0.7, tau_min=0.3, gamma=5.0):
+        """Sigmoidal curriculum learning for saliency threshold"""
+        t = epoch / total_epochs
+        return tau_min + (tau_max - tau_min) * (2/(1 + np.exp(-gamma*t)) - 1)
 
+import torch
+import numpy as np
+import random
+
+def class_aware_mixup_segmentation(images, masks, num_classes=5, alpha=0.4):
+    """
+    Applies Class-Aware Mixup for segmentation tasks with one-hot masks.
+
+    - images: Tensor of shape (B, C, H, W) - batch of images
+    - masks: Tensor of shape (B, num_classes, H, W) - one-hot encoded masks
+    - num_classes: Total number of classes including background (default = 5)
+    - alpha: Mixup Beta distribution parameter
+
+    Returns:
+    - Mixed images and mixed one-hot masks
+    """
+
+    batch_size = images.size(0)
+    mixed_images = images.clone()
+    mixed_masks = masks.clone()
+
+    # Convert one-hot to class indices for easier class-aware selection
+    mask_indices = torch.argmax(masks, dim=1)  # Shape: (B, H, W)
+
+    for class_label in range(1, num_classes):  # Ignore class 0 (background)
+        # Find samples containing this class
+        class_indices = (mask_indices == class_label).any(dim=(1, 2)).nonzero(as_tuple=True)[0]
+        if len(class_indices) < 2:  # Need at least two samples for mixup
+            continue
+
+        for idx in class_indices:
+            mix_idx = random.choice(class_indices)
+            if idx == mix_idx:  # Avoid self-mixing
+                continue
+            
+            lam = np.random.beta(alpha, alpha)  # Mixup ratio
+
+            # Mix images
+            mixed_images[idx] = lam * images[idx] + (1 - lam) * images[mix_idx]
+            
+            # Mix labels using soft-labeling
+            mixed_masks[idx] = lam * masks[idx] + (1 - lam) * masks[mix_idx]
+
+    return mixed_images, mixed_masks
 
 def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -175,17 +223,23 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         GLA_img = samples['images']
         LLA_img = samples['aug_images']
         lbl = samples['labels']
+          # Apply Class-Aware Mixup
         if cur_iteration % visual_freq == 0:
             visual_dict={}
-            visual_dict['GLA']=GLA_img.detach().cpu().numpy()[0,0]
+            # visual_dict['GLA']=mixed_GLA_img.detach().cpu().numpy()[0,0]
             visual_dict['LLA']=LLA_img.detach().cpu().numpy()[0,0]
             visual_dict['GT']=lbl.detach().cpu().numpy()[0]
+            # visual_dict['classmixed_GT']=mixed_lbl.detach().cpu().numpy()[0]
         else:
             visual_dict=None
 
-        input_var = Variable(GLA_img, requires_grad=True)
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
+        mixed_GLA_img, mixed_lbl = class_aware_mixup_segmentation(GLA_img, lbl, num_classes=5)
+        print("here i am ",mixed_lbl.shape)
+        input_var = Variable(mixed_GLA_img, requires_grad=True)
+        if visual_dict is not None:
+            visual_dict['GLA']=mixed_GLA_img.detach().cpu().numpy()[0,0]  
         # print("#####@here i sthe device ", device)
         # print(input_var.shape)
         # print(lbl.shape)
@@ -195,7 +249,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             optimizer.zero_grad()
             logits_orig, feats_orig_list = model(input_var, return_features=True)
             # print(logits_orig.shape)
-            losses=dice_loss(logits_orig, lbl)
+            losses=dice_loss(logits_orig, mixed_lbl)
             losses.backward(retain_graph=True)
             # print("LLA image size ", LLA_img.shape)
 
@@ -207,16 +261,18 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             if visual_dict is not None:
                 visual_dict['GLA_pred']=torch.argmax(logits_orig,1).cpu().numpy()[0]
 
+            # threshold_value = adaptive_threshold(epoch, max_epoch)
+            # saliency = (saliency > threshold_value).float()
             if visual_dict is not None:
                 visual_dict['GLA_saliency']= saliency.detach().cpu().numpy()[0,0]
-
-            mixed_img = GLA_img.detach() * saliency + LLA_img * (1 - saliency)
+            mixed_img = mixed_GLA_img.detach() * saliency + LLA_img * (1 - saliency)
+            sum_lbl = mixed_lbl + lbl
             if visual_dict is not None:
                 visual_dict['SBF']= mixed_img.detach().cpu().numpy()[0,0]
 
             aug_var = Variable(mixed_img, requires_grad=True)
             logits_aug, feats_aug_list = model(aug_var, return_features=True)
-            dice_loss_value = dice_loss(logits_aug, lbl)
+            dice_loss_value = dice_loss(logits_aug, sum_lbl)
             cons_loss = aux_criterion(feats_orig_list, feats_aug_list)
             total_loss = dice_loss_value + cons_loss
             total_loss.backward()
@@ -321,6 +377,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         if visdir is not None and cur_iteration % visual_freq==0:
         # if visdir is not None and cur_iteration % visual_freq == 0:
             visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
+            visual_dict['ClassMixedLabel'] = torch.argmax(mixed_lbl,1).cpu().numpy()[0]
             
             fs = int(len(visual_dict) ** 0.5) + 1
             plt.figure(figsize=(fs * 4, fs * 4))
@@ -329,7 +386,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 plt.subplot(fs, fs, idx + 1)
                 plt.title(k, fontsize=12, fontweight='bold')
                 plt.axis('off')
-                if k not in ['GT','GLA_pred','SBF_pred']:
+                if k not in ['GT','GLA_pred','SBF_pred','classmixed_GT']:
                     plt.imshow(visual_dict[k], cmap='gray')
                 else:
                     plt.imshow(visual_dict[k], vmin=0, vmax=4)
