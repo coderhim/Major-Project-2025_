@@ -25,6 +25,7 @@ data:
   params:
     batch_size: 50
     num_workers: 8
+    max_epoch: 30
     train:
       target: dataloaders.AbdominalDataset.get_training
       params:
