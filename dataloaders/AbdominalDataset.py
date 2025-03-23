@@ -9,6 +9,7 @@ import platform
 import torch.utils.data as torch_data
 import math
 import itertools
+from mmseg.datasets.pipelines import ClassMix 
 from .location_scale_augmentation import LocationScaleAugmentation, HybridAugmentor
 hostname = platform.node()
 # folder for datasets
@@ -235,102 +236,146 @@ class AbdominalDataset(torch_data.Dataset):
     def set_epoch(self, epoch):
         """Set the current epoch for curriculum augmentation"""
         self.current_epoch = epoch
+    # import torch
+    # import numpy as np
+    # from mmseg.datasets.pipelines import ClassMix
+
     def __getitem__(self, index):
         index = index % len(self.actual_dataset)
         curr_dict = self.actual_dataset[index]
+        
+        img = curr_dict["img"].copy()
+        lb = curr_dict["lb"].copy()
+
+        # Training mode
         if self.is_train:
             if self.location_scale is not None:
-                img = curr_dict["img"].copy()
-                lb = curr_dict["lb"].copy()
-                img= self.denorm_(img,curr_dict['vol_info'])
-                # Convert to torch tensors for HybridAugmentor
-                img_tensor = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
-                # Create one-hot encoded mask for the augmentor
+                # Apply de-normalization
+                img = self.denorm_(img, curr_dict['vol_info'])
+                
+                # Convert to tensors
+                img_tensor = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()  # (C, H, W)
                 lb_int = lb.astype(np.int32)
-                masks = np.zeros((1, self.nclass, lb_int.shape[0], lb_int.shape[1]), dtype=np.float32)
+
+                # Convert mask to one-hot encoding (C, H, W)
+                masks = np.zeros((self.nclass, lb_int.shape[0], lb_int.shape[1]), dtype=np.float32)
                 for c in range(self.nclass):
-                    masks[0, c] = (lb_int[:, :, 0] == c).astype(np.float32)
+                    masks[c] = (lb_int[:, :, 0] == c).astype(np.float32)
                 masks_tensor = torch.from_numpy(masks).float()
-                # Move to appropriate device if using GPU
-                # device = next(self.hybrid_augmentor.parameters()).device
+
+                # Move tensors to CPU (or adapt for GPU if needed)
                 device = torch.device("cpu")
                 img_tensor = img_tensor.to(device)
                 masks_tensor = masks_tensor.to(device)
 
-               # Apply hybrid augmentation
-                with torch.no_grad():  # No need to track gradients during augmentation
-                    global_aug, local_aug = self.hybrid_augmentor(
-                        img_tensor.unsqueeze(0),  # Add batch dimension
-                        masks_tensor, 
+                # Apply HybridAugmentor
+                with torch.no_grad():
+                    local_aug = self.hybrid_augmentor(
+                        img_tensor.unsqueeze(0),  # Add batch dim
+                        masks_tensor.unsqueeze(0),  # Add batch dim
                         self.current_epoch, 
                         self.total_epochs
-                    )
-                    global_aug = global_aug[0]  # Remove batch dimension
-                    local_aug = local_aug[0]    # Remove batch dimension
+                    )[0]  # Remove batch dim
                 
-                # Convert back to numpy for further processing
-                global_aug_np = global_aug.cpu().numpy()
+                # Convert back to numpy
                 local_aug_np = local_aug.cpu().numpy()
-                
-                # Renormalize the augmented images
-                global_aug_np = np.transpose(global_aug_np, (1, 2, 0))
-                local_aug_np = np.transpose(local_aug_np, (1, 2, 0))
-                global_aug_np = self.renorm_(global_aug_np, curr_dict['vol_info'])
-                local_aug_np = self.renorm_(local_aug_np, curr_dict['vol_info'])
-                
+                local_aug_np = np.transpose(local_aug_np, (1, 2, 0))  # (H, W, C)
+                global_aug_np = local_aug_np  # (H, W, C)
+
+                # Apply ClassMix augmentation
+                if np.random.rand() < 0.5:  # Apply ClassMix with 50% probability
+                    rand_index = np.random.randint(0, len(self.actual_dataset))
+                    if rand_index != index:
+                        rand_dict = self.actual_dataset[rand_index]
+                        
+                        img2 = rand_dict["img"].copy()
+                        lb2 = rand_dict["lb"].copy()
+                        
+                        # De-normalize second image
+                        img2 = self.denorm_(img2, rand_dict['vol_info'])
+
+                        # Convert second image and label to tensors
+                        img2_tensor = torch.from_numpy(np.transpose(img2, (2, 0, 1))).float()
+                        lb2_int = lb2.astype(np.int32)
+                        
+                        # One-hot encode second mask
+                        masks2 = np.zeros((self.nclass, lb2_int.shape[0], lb2_int.shape[1]), dtype=np.float32)
+                        for c in range(self.nclass):
+                            masks2[c] = (lb2_int[:, :, 0] == c).astype(np.float32)
+                        masks2_tensor = torch.from_numpy(masks2).float()
+
+                        # Convert to dict for MMSeg ClassMix
+                        mix_data = dict(
+                            img=local_aug_np,  
+                            gt_semantic_seg=masks_tensor.permute(1, 2, 0).numpy(),
+                            img2=img2_tensor.permute(1, 2, 0).numpy(),
+                            gt_semantic_seg2=masks2_tensor.permute(1, 2, 0).numpy(),
+                        )
+
+                        classmix = ClassMix(prob=0.5)
+                        mix_result = classmix.transform(mix_data)
+                        mix_mask = torch.tensor(mix_result["gt_semantic_seg"]).permute(2, 0, 1)
+                        # Convert back to PyTorch tensor
+                        local_aug_np = mix_result["img"]
+                        local_aug_np = self.renorm_(local_aug_np, curr_dict['vol_info'])  # Re-normalize
+                        local_aug_np = np.transpose(local_aug_np, (2, 0, 1))  # (C, H, W)
+                        local_aug = torch.from_numpy(local_aug_np).float()
+
                 # Apply transforms if needed
                 if self.transforms:
-                    comp = np.concatenate([global_aug_np, local_aug_np, curr_dict["lb"]], -1)
+                    comp = np.concatenate([global_aug_np, local_aug_np, curr_dict["lb"], mix_mask], axis=-1)
                     timg, lb = self.transforms(
-                        comp, c_img=2, c_label=1, nclass=self.nclass, 
+                        comp, c_img=2, c_label=2, nclass=self.nclass, 
                         is_train=self.is_train, use_onehot=False
                     )
                     global_aug_np, local_aug_np = np.split(timg, 2, -1)
-                
-                img = global_aug_np
-                aug_img = local_aug_np
-                aug_img = np.float32(aug_img)
-                aug_img = np.transpose(aug_img, (2, 0, 1))
-                aug_img = torch.from_numpy(aug_img)
+                    lb, mixed_lb = np.split(lb, 2, -1)
+                    img = global_aug_np
+                    aug_img = local_aug_np
+                    aug_img = np.float32(aug_img)
+                    aug_img = np.transpose(aug_img, (2, 0, 1))  # (C, H, W)
+                    aug_img = torch.from_numpy(np.float32(aug_img))
+
             else:
+                # Apply only basic transformations if location_scale is None
                 comp = np.concatenate([curr_dict["img"], curr_dict["lb"]], axis=-1)
                 if self.transforms:
-                    img, lb = self.transforms(comp, c_img=1, c_label=1, nclass=self.nclass, is_train=self.is_train,
-                                              use_onehot=False)
-                aug_img = 1 # Placeholder when not using augmentation
+                    img, lb = self.transforms(comp, c_img=1, c_label=1, nclass=self.nclass, is_train=self.is_train, use_onehot=False)
+                aug_img = torch.tensor(1.0)  # Placeholder if no augmentation is applied
         else:
+            # Validation/Test mode (no augmentation)
             img = curr_dict['img']
             lb = curr_dict['lb']
-            aug_img=1 # Placeholder for validation/test
-
+            aug_img = torch.tensor(1.0)  # Placeholder
+        
+        # Convert to float32 and PyTorch tensors
         img = np.float32(img)
         lb = np.float32(lb)
-
+        mixed_lb = np.float32(mixed_lb)
         img = np.transpose(img, (2, 0, 1))
-        lb  = np.transpose(lb, (2, 0, 1))
+        lb = np.transpose(lb, (2, 0, 1))
+        mixed_lb = np.transpose(mixed_lb, (2, 0, 1))
+        img = torch.from_numpy(img)
+        lb = torch.from_numpy(lb)
+        mixed_lb = torch.from_numpy(mixed_lb)
 
-        img = torch.from_numpy( img )
-        lb  = torch.from_numpy( lb )
-
+        # Handle z-dimension tiling
         if self.tile_z_dim > 1:
-            img = img.repeat( [ self.tile_z_dim, 1, 1] )
+            img = img.repeat([self.tile_z_dim, 1, 1])  
             assert img.ndimension() == 3
 
-        is_start    = curr_dict["is_start"]
-        is_end      = curr_dict["is_end"]
-        nframe      = np.int32(curr_dict["nframe"])
-        scan_id     = curr_dict["scan_id"]
-        z_id        = curr_dict["z_id"]
-
-        sample = {"images": img,
-                "labels":lb[0].long(),
-                "is_start": is_start,
-                "is_end": is_end,
-                "nframe": nframe,
-                "scan_id": scan_id,
-                "z_id": z_id,
-                "aug_images": aug_img,
-                }
+        # Metadata
+        sample = {
+            "images": img,
+            "labels": lb[0].long(),
+            "mixed_labels": mixed_lb[0].long(),
+            "is_start": curr_dict["is_start"],
+            "is_end": curr_dict["is_end"],
+            "nframe": np.int32(curr_dict["nframe"]),
+            "scan_id": curr_dict["scan_id"],
+            "z_id": curr_dict["z_id"],
+            "aug_images": aug_img,
+        }
         return sample
 
     def denorm_(self, img, vol_info):

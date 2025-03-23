@@ -223,23 +223,26 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         GLA_img = samples['images']
         LLA_img = samples['aug_images']
         lbl = samples['labels']
+        mixed_lbl = samples['mixed_labels']
           # Apply Class-Aware Mixup
         if cur_iteration % visual_freq == 0:
             visual_dict={}
             # visual_dict['GLA']=mixed_GLA_img.detach().cpu().numpy()[0,0]
             visual_dict['LLA']=LLA_img.detach().cpu().numpy()[0,0]
             visual_dict['GT']=lbl.detach().cpu().numpy()[0]
+            visual_dict['GT_mixed']=mixed_lbl.detach().cpu().numpy()[0]
             # visual_dict['classmixed_GT']=mixed_lbl.detach().cpu().numpy()[0]
         else:
             visual_dict=None
 
         # Generate augmented sample
         lbl = F.one_hot(lbl,5).permute((0,3,1,2))
-        mixed_GLA_img, mixed_lbl = class_aware_mixup_segmentation(GLA_img, lbl, num_classes=5)
+        mixed_lbl = F.one_hot(mixed_lbl,5).permute((0,3,1,2))
+        # mixed_GLA_img, mixed_lbl = class_aware_mixup_segmentation(GLA_img, lbl, num_classes=5)
         # print("here i am ",mixed_lbl.shape)
-        input_var = Variable(mixed_GLA_img, requires_grad=True)
+        input_var = Variable(LLA_img, requires_grad=True)
         if visual_dict is not None:
-            visual_dict['GLA']=mixed_GLA_img.detach().cpu().numpy()[0,0]  
+            visual_dict['LLA_mixed']=LLA_img.detach().cpu().numpy()[0,0]  
         # print("#####@here i sthe device ", device)
         # print(input_var.shape)
         # print(lbl.shape)
@@ -259,7 +262,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # saliency=get_SBF_map(gradient,config.grid_size)
 
             if visual_dict is not None:
-                visual_dict['GLA_pred']=torch.argmax(logits_orig,1).cpu().numpy()[0]
+                visual_dict['LLA_pred']=torch.argmax(logits_orig,1).cpu().numpy()[0]
 
             # threshold_value = adaptive_threshold(epoch, max_epoch)
             # saliency = (saliency > threshold_value).float()
@@ -270,7 +273,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
             # if visual_dict is not None:
                 # visual_dict['SBF']= mixed_img.detach().cpu().numpy()[0,0]
 
-            aug_var = Variable(LLA_img, requires_grad=True)
+            aug_var = Variable(GLA_img, requires_grad=True)
             logits_aug, feats_aug_list = model(aug_var, return_features=True)
             dice_loss_value = dice_loss(logits_aug, lbl)
             cons_loss = aux_criterion(feats_orig_list, feats_aug_list)
@@ -282,7 +285,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 # visual_dict['Sum_label']= torch.argmax(sum_lbl, 1).cpu().numpy()[0]
             if visual_dict is not None:
                 # visual_dict['SBF_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
-                visual_dict['LLA_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
+                visual_dict['GLA_pred'] = torch.argmax(logits_aug, 1).cpu().numpy()[0]
 
             optimizer.step()
 
@@ -379,8 +382,8 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
         # visual_dict = None
         if visdir is not None and cur_iteration % visual_freq==0:
         # if visdir is not None and cur_iteration % visual_freq == 0:
-            visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
-            visual_dict['ClassMixedLabel'] = torch.argmax(mixed_lbl,1).cpu().numpy()[0]
+            # visual_dict['Logits_Augmented'] = torch.argmax(logits_aug,1).cpu().numpy()[0]
+            # visual_dict['ClassMixedLabel'] = torch.argmax(mixed_lbl,1).cpu().numpy()[0]
             
             fs = int(len(visual_dict) ** 0.5) + 1
             plt.figure(figsize=(fs * 4, fs * 4))
@@ -389,7 +392,7 @@ def train_one_epoch_SBF(model: torch.nn.Module, criterion: torch.nn.Module,
                 plt.subplot(fs, fs, idx + 1)
                 plt.title(k, fontsize=12, fontweight='bold')
                 plt.axis('off')
-                if k not in ['GT','GLA_pred','SBF_pred','classmixed_GT']:
+                if k not in ['GT','GLA_pred','SBF_pred','GT_mixed']:
                     plt.imshow(visual_dict[k], cmap='gray')
                 else:
                     plt.imshow(visual_dict[k], vmin=0, vmax=4)

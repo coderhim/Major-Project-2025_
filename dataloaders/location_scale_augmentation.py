@@ -284,12 +284,12 @@ class HybridAugmentor(nn.Module):
 
     def forward(self, x, masks, epoch, total_epochs):
             # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            device = x.device
+            # device = x.device
             # Phase 1: Class-aware nonlinear mixup
-            mixed_x, lam = self.class_aware_mixup(x, masks)
+            # mixed_x, lam = self.class_aware_mixup(x, masks)
             
             # Phase 2: Location-scale transformation
-            global_aug = self.thin_plate_spline_transform(mixed_x, masks)
+            # global_aug = self.thin_plate_spline_transform(mixed_x, masks)
             local_aug = self.thin_plate_spline_transform(x, masks)
             # global_aug = self.bezier_transform(mixed_x, masks)
             # local_aug = self.bezier_transform(x, masks)
@@ -315,7 +315,7 @@ class HybridAugmentor(nn.Module):
 
             # Fused output
             # fused = saliency * global_aug + (1 - saliency) * local_aug
-            return global_aug, local_aug
+            return  local_aug
     
 class LocationScaleAugmentation(object):
     def __init__(self, vrange=(0.,1.), background_threshold=0.01, nPoints=4, nTimes=100000):
